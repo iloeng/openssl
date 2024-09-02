@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -30,6 +30,7 @@
 #ifndef OPENSSL_NO_DSA
 # include <openssl/dsa.h>
 #endif
+#include "internal/e_os.h"    /* For isatty() */
 
 #define BITS               "default_bits"
 #define KEYFILE            "default_keyfile"
@@ -43,7 +44,7 @@
 
 #define DEFAULT_KEY_LENGTH 2048
 #define MIN_KEY_LENGTH     512
-#define DEFAULT_DAYS       30 /* default cert validity period in days */
+#define DEFAULT_DAYS       30 /* default certificate validity period in days */
 #define UNSET_DAYS         -2 /* -1 may be used for testing expiration checks */
 #define EXT_COPY_UNSET     -1
 
@@ -87,10 +88,10 @@ typedef enum OPTION_choice {
     OPT_VERIFY, OPT_NOENC, OPT_NODES, OPT_NOOUT, OPT_VERBOSE, OPT_UTF8,
     OPT_NAMEOPT, OPT_REQOPT, OPT_SUBJ, OPT_SUBJECT, OPT_TEXT,
     OPT_X509, OPT_X509V1, OPT_CA, OPT_CAKEY,
-    OPT_MULTIVALUE_RDN, OPT_DAYS, OPT_SET_SERIAL,
+    OPT_MULTIVALUE_RDN, OPT_NOT_BEFORE, OPT_NOT_AFTER, OPT_DAYS, OPT_SET_SERIAL,
     OPT_COPY_EXTENSIONS, OPT_EXTENSIONS, OPT_REQEXTS, OPT_ADDEXT,
     OPT_PRECERT, OPT_MD,
-    OPT_SECTION,
+    OPT_SECTION, OPT_QUIET,
     OPT_R_ENUM, OPT_PROV_ENUM
 } OPTION_CHOICE;
 
@@ -127,7 +128,11 @@ const OPTIONS req_options[] = {
      "Print the subject of the output request or cert"},
     {"multivalue-rdn", OPT_MULTIVALUE_RDN, '-',
      "Deprecated; multi-valued RDNs support is always on."},
-    {"days", OPT_DAYS, 'p', "Number of days cert is valid for"},
+    {"not_before", OPT_NOT_BEFORE, 's',
+     "[CC]YYMMDDHHMMSSZ value for notBefore certificate field"},
+    {"not_after", OPT_NOT_AFTER, 's',
+     "[CC]YYMMDDHHMMSSZ value for notAfter certificate field, overrides -days"},
+    {"days", OPT_DAYS, 'p', "Number of days certificate is valid for"},
     {"set_serial", OPT_SET_SERIAL, 's', "Serial number to use"},
     {"copy_extensions", OPT_COPY_EXTENSIONS, 's',
      "copy extensions from request when using -x509"},
@@ -158,6 +163,7 @@ const OPTIONS req_options[] = {
     {"batch", OPT_BATCH, '-',
      "Do not ask anything during request generation"},
     {"verbose", OPT_VERBOSE, '-', "Verbose output"},
+    {"quiet", OPT_QUIET, '-', "Terse output"},
     {"noenc", OPT_NOENC, '-', "Don't encrypt private keys"},
     {"nodes", OPT_NODES, '-', "Don't encrypt private keys; deprecated"},
     {"noout", OPT_NOOUT, '-', "Do not output REQ"},
@@ -198,7 +204,7 @@ static int duplicated(LHASH_OF(OPENSSL_STRING) *addexts, char *kv)
 
     /* Check syntax. */
     /* Skip leading whitespace, make a copy. */
-    while (isspace(*kv))
+    while (isspace(_UC(*kv)))
         kv++;
     if ((p = strchr(kv, '=')) == NULL) {
         BIO_printf(bio_err, "Parse error on -addext: missing '='\n");
@@ -210,7 +216,7 @@ static int duplicated(LHASH_OF(OPENSSL_STRING) *addexts, char *kv)
 
     /* Skip trailing space before the equal sign. */
     for (p = kv + off; p > kv; --p)
-        if (!isspace(p[-1]))
+        if (!isspace(_UC(p[-1])))
             break;
     if (p == kv) {
         BIO_printf(bio_err, "Parse error on -addext: missing key\n");
@@ -258,8 +264,9 @@ int req_main(int argc, char **argv)
     char *template = default_config_file, *keyout = NULL;
     const char *keyalg = NULL;
     OPTION_CHOICE o;
+    char *not_before = NULL, *not_after = NULL;
     int days = UNSET_DAYS;
-    int ret = 1, gen_x509 = 0, i = 0, newreq = 0, verbose = 0;
+    int ret = 1, gen_x509 = 0, i = 0, newreq = 0, verbose = 0, progress = 1;
     int informat = FORMAT_UNDEF, outformat = FORMAT_PEM, keyform = FORMAT_UNDEF;
     int modulus = 0, multirdn = 1, verify = 0, noout = 0, text = 0;
     int noenc = 0, newhdr = 0, subject = 0, pubkey = 0, precert = 0, x509v1 = 0;
@@ -389,6 +396,11 @@ int req_main(int argc, char **argv)
             break;
         case OPT_VERBOSE:
             verbose = 1;
+            progress = 1;
+            break;
+        case OPT_QUIET:
+            verbose = 0;
+            progress = 0;
             break;
         case OPT_UTF8:
             chtype = MBSTRING_UTF8;
@@ -417,9 +429,15 @@ int req_main(int argc, char **argv)
         case OPT_CAKEY:
             CAkeyfile = opt_arg();
             break;
+        case OPT_NOT_BEFORE:
+            not_before = opt_arg();
+            break;
+        case OPT_NOT_AFTER:
+            not_after = opt_arg();
+            break;
         case OPT_DAYS:
             days = atoi(opt_arg());
-            if (days < -1) {
+            if (days <= UNSET_DAYS) {
                 BIO_printf(bio_err, "%s: -days parameter arg must be >= -1\n",
                            prog);
                 goto end;
@@ -464,7 +482,7 @@ int req_main(int argc, char **argv)
             }
             i = duplicated(addexts, p);
             if (i == 1)
-                goto opthelp;
+                goto end;
             if (i == -1)
                 BIO_printf(bio_err, "Internal error handling -addext %s\n", p);
             if (i < 0 || BIO_printf(addext_bio, "%s\n", p) < 0)
@@ -488,14 +506,18 @@ int req_main(int argc, char **argv)
 
     if (!gen_x509) {
         if (days != UNSET_DAYS)
-            BIO_printf(bio_err, "Ignoring -days without -x509; not generating a certificate\n");
+            BIO_printf(bio_err, "Warning: Ignoring -days without -x509; not generating a certificate\n");
+        if (not_before != NULL)
+            BIO_printf(bio_err, "Warning: Ignoring -not_before without -x509; not generating a certificate\n");
+        if (not_after != NULL)
+            BIO_printf(bio_err, "Warning: Ignoring -not_after without -x509; not generating a certificate\n");
         if (ext_copy == EXT_COPY_NONE)
-            BIO_printf(bio_err, "Ignoring -copy_extensions 'none' when -x509 is not given\n");
+            BIO_printf(bio_err, "Warning: Ignoring -copy_extensions 'none' when -x509 is not given\n");
     }
     if (infile == NULL) {
         if (gen_x509)
             newreq = 1;
-        else if (!newreq)
+        else if (!newreq && isatty(fileno_stdin()))
             BIO_printf(bio_err,
                        "Warning: Will read cert request from stdin since no -in option is given\n");
     }
@@ -518,9 +540,7 @@ int req_main(int argc, char **argv)
         goto end;
 
     if (req_conf != NULL) {
-        p = NCONF_get_string(req_conf, NULL, "oid_file");
-        if (p == NULL)
-            ERR_clear_error();
+        p = app_conf_try_string(req_conf, NULL, "oid_file");
         if (p != NULL) {
             BIO *oid_bio = BIO_new_file(p, "r");
 
@@ -543,19 +563,14 @@ int req_main(int argc, char **argv)
             goto opthelp;
     } else {
         /* No digest specified, default to configuration */
-        p = NCONF_get_string(req_conf, section, "default_md");
-        if (p == NULL)
-            ERR_clear_error();
-        else
+        p = app_conf_try_string(req_conf, section, "default_md");
+        if (p != NULL)
             digest = p;
     }
 
-    if (extsect == NULL) {
-        extsect = NCONF_get_string(req_conf, section,
+    if (extsect == NULL)
+        extsect = app_conf_try_string(req_conf, section,
                                    gen_x509 ? V3_EXTENSIONS : REQ_EXTENSIONS);
-        if (extsect == NULL)
-            ERR_clear_error();
-    }
     if (extsect != NULL) {
         /* Check syntax of extension section in config file */
         X509V3_CTX ctx;
@@ -574,41 +589,30 @@ int req_main(int argc, char **argv)
         X509V3_CTX ctx;
 
         X509V3_set_ctx_test(&ctx);
-        X509V3_set_nconf(&ctx, addext_conf);
+        X509V3_set_nconf(&ctx, req_conf);
         if (!X509V3_EXT_add_nconf(addext_conf, &ctx, "default", NULL)) {
             BIO_printf(bio_err, "Error checking extensions defined using -addext\n");
             goto end;
         }
     }
 
-    if (passin == NULL) {
+    if (passin == NULL)
         passin = nofree_passin =
-            NCONF_get_string(req_conf, section, "input_password");
-        if (passin == NULL)
-            ERR_clear_error();
-    }
+            app_conf_try_string(req_conf, section, "input_password");
 
-    if (passout == NULL) {
+    if (passout == NULL)
         passout = nofree_passout =
-            NCONF_get_string(req_conf, section, "output_password");
-        if (passout == NULL)
-            ERR_clear_error();
-    }
+            app_conf_try_string(req_conf, section, "output_password");
 
-    p = NCONF_get_string(req_conf, section, STRING_MASK);
-    if (p == NULL)
-        ERR_clear_error();
-
+    p = app_conf_try_string(req_conf, section, STRING_MASK);
     if (p != NULL && !ASN1_STRING_set_default_mask_asc(p)) {
         BIO_printf(bio_err, "Invalid global string mask setting %s\n", p);
         goto end;
     }
 
     if (chtype != MBSTRING_UTF8) {
-        p = NCONF_get_string(req_conf, section, UTF8_IN);
-        if (p == NULL)
-            ERR_clear_error();
-        else if (strcmp(p, "yes") == 0)
+        p = app_conf_try_string(req_conf, section, UTF8_IN);
+        if (p != NULL && strcmp(p, "yes") == 0)
             chtype = MBSTRING_UTF8;
     }
 
@@ -626,7 +630,7 @@ int req_main(int argc, char **argv)
     if (newreq && pkey == NULL) {
         app_RAND_load_conf(req_conf, section);
 
-        if (!NCONF_get_number(req_conf, section, BITS, &newkey_len))
+        if (!app_conf_try_number(req_conf, section, BITS, &newkey_len))
             newkey_len = DEFAULT_KEY_LENGTH;
 
         genctx = set_keygen_ctx(keyalg, &keyalgstr, &newkey_len, gen_eng);
@@ -670,19 +674,19 @@ int req_main(int argc, char **argv)
             }
         }
 
-        EVP_PKEY_CTX_set_cb(genctx, progress_cb);
         EVP_PKEY_CTX_set_app_data(genctx, bio_err);
+        if (progress)
+            EVP_PKEY_CTX_set_cb(genctx, progress_cb);
 
         pkey = app_keygen(genctx, keyalgstr, newkey_len, verbose);
+        if (pkey == NULL)
+            goto end;
 
         EVP_PKEY_CTX_free(genctx);
         genctx = NULL;
     }
-    if (keyout == NULL && keyfile == NULL) {
-        keyout = NCONF_get_string(req_conf, section, KEYFILE);
-        if (keyout == NULL)
-            ERR_clear_error();
-    }
+    if (keyout == NULL && keyfile == NULL)
+        keyout = app_conf_try_string(req_conf, section, KEYFILE);
 
     if (pkey != NULL && (keyfile == NULL || keyout != NULL)) {
         if (verbose) {
@@ -696,14 +700,10 @@ int req_main(int argc, char **argv)
         if (out == NULL)
             goto end;
 
-        p = NCONF_get_string(req_conf, section, "encrypt_rsa_key");
-        if (p == NULL) {
-            ERR_clear_error();
-            p = NCONF_get_string(req_conf, section, "encrypt_key");
-            if (p == NULL)
-                ERR_clear_error();
-        }
-        if ((p != NULL) && (strcmp(p, "no") == 0))
+        p = app_conf_try_string(req_conf, section, "encrypt_rsa_key");
+        if (p == NULL)
+            p = app_conf_try_string(req_conf, section, "encrypt_key");
+        if (p != NULL && strcmp(p, "no") == 0)
             cipher = NULL;
         if (noenc)
             cipher = NULL;
@@ -720,7 +720,7 @@ int req_main(int argc, char **argv)
             }
             goto end;
         }
-        BIO_free(out);
+        BIO_free_all(out);
         out = NULL;
         BIO_printf(bio_err, "-----\n");
     }
@@ -738,7 +738,7 @@ int req_main(int argc, char **argv)
             BIO_printf(bio_err,
                        "Warning: Not placing -key in cert or request since request is used\n");
         req = load_csr_autofmt(infile /* if NULL, reads from stdin */,
-                               informat, "X509 request");
+                               informat, vfyopts, "X509 request");
         if (req == NULL)
             goto end;
     } else if (infile != NULL) {
@@ -818,10 +818,11 @@ int req_main(int argc, char **argv)
 
             if (!X509_set_issuer_name(new_x509, issuer))
                 goto end;
-            if (days == UNSET_DAYS) {
+            if (days == UNSET_DAYS)
                 days = DEFAULT_DAYS;
-            }
-            if (!set_cert_times(new_x509, NULL, NULL, days))
+            else if (not_after != NULL)
+                BIO_printf(bio_err,"Warning: -not_after option overriding -days option\n");
+            if (!set_cert_times(new_x509, not_before, not_after, days, 1))
                 goto end;
             if (!X509_set_subject_name(new_x509, n_subj))
                 goto end;
@@ -934,10 +935,11 @@ int req_main(int argc, char **argv)
 
         if (i < 0)
             goto end;
-        if (i == 0)
+        if (i == 0) {
             BIO_printf(bio_err, "Certificate request self-signature verify failure\n");
-        else /* i > 0 */
-            BIO_printf(bio_err, "Certificate request self-signature verify OK\n");
+	    goto end;
+        } else /* i > 0 */
+            BIO_printf(bio_out, "Certificate request self-signature verify OK\n");
     }
 
     if (noout && !text && !modulus && !subject && !pubkey) {
@@ -991,10 +993,10 @@ int req_main(int argc, char **argv)
         else
             tpubkey = X509_REQ_get0_pubkey(req);
         if (tpubkey == NULL) {
-            fprintf(stdout, "Modulus is unavailable\n");
+            BIO_puts(bio_err, "Modulus is unavailable\n");
             goto end;
         }
-        fprintf(stdout, "Modulus=");
+        BIO_puts(out, "Modulus=");
         if (EVP_PKEY_is_a(tpubkey, "RSA") || EVP_PKEY_is_a(tpubkey, "RSA-PSS")) {
             BIGNUM *n = NULL;
 
@@ -1003,9 +1005,9 @@ int req_main(int argc, char **argv)
             BN_print(out, n);
             BN_free(n);
         } else {
-            fprintf(stdout, "Wrong Algorithm type");
+            BIO_puts(out, "Wrong Algorithm type");
         }
-        fprintf(stdout, "\n");
+        BIO_puts(out, "\n");
     }
 
     if (!noout && !gen_x509) {
@@ -1072,16 +1074,12 @@ static int make_REQ(X509_REQ *req, EVP_PKEY *pkey, X509_NAME *fsubj,
     STACK_OF(CONF_VALUE) *dn_sk = NULL, *attr_sk = NULL;
     char *tmp, *dn_sect, *attr_sect;
 
-    tmp = NCONF_get_string(req_conf, section, PROMPT);
-    if (tmp == NULL)
-        ERR_clear_error();
-    if ((tmp != NULL) && strcmp(tmp, "no") == 0)
+    tmp = app_conf_try_string(req_conf, section, PROMPT);
+    if (tmp != NULL && strcmp(tmp, "no") == 0)
         no_prompt = 1;
 
-    dn_sect = NCONF_get_string(req_conf, section, DISTINGUISHED_NAME);
-    if (dn_sect == NULL) {
-        ERR_clear_error();
-    } else {
+    dn_sect = app_conf_try_string(req_conf, section, DISTINGUISHED_NAME);
+    if (dn_sect != NULL) {
         dn_sk = NCONF_get_section(req_conf, dn_sect);
         if (dn_sk == NULL) {
             BIO_printf(bio_err, "Unable to get '%s' section\n", dn_sect);
@@ -1089,10 +1087,8 @@ static int make_REQ(X509_REQ *req, EVP_PKEY *pkey, X509_NAME *fsubj,
         }
     }
 
-    attr_sect = NCONF_get_string(req_conf, section, ATTRIBUTES);
-    if (attr_sect == NULL) {
-        ERR_clear_error();
-    } else {
+    attr_sect = app_conf_try_string(req_conf, section, ATTRIBUTES);
+    if (attr_sect != NULL) {
         attr_sk = NCONF_get_section(req_conf, attr_sect);
         if (attr_sk == NULL) {
             BIO_printf(bio_err, "Unable to get '%s' section\n", attr_sect);
@@ -1188,31 +1184,23 @@ static int prompt_info(X509_REQ *req,
                 goto start;
             if (!join(buf, sizeof(buf), v->name, "_default", "Name"))
                 return 0;
-            if ((def = NCONF_get_string(req_conf, dn_sect, buf)) == NULL) {
-                ERR_clear_error();
+            if ((def = app_conf_try_string(req_conf, dn_sect, buf)) == NULL)
                 def = "";
-            }
 
             if (!join(buf, sizeof(buf), v->name, "_value", "Name"))
                 return 0;
-            if ((value = NCONF_get_string(req_conf, dn_sect, buf)) == NULL) {
-                ERR_clear_error();
+            if ((value = app_conf_try_string(req_conf, dn_sect, buf)) == NULL)
                 value = NULL;
-            }
 
             if (!join(buf, sizeof(buf), v->name, "_min", "Name"))
                 return 0;
-            if (!NCONF_get_number(req_conf, dn_sect, buf, &n_min)) {
-                ERR_clear_error();
+            if (!app_conf_try_number(req_conf, dn_sect, buf, &n_min))
                 n_min = -1;
-            }
 
             if (!join(buf, sizeof(buf), v->name, "_max", "Name"))
                 return 0;
-            if (!NCONF_get_number(req_conf, dn_sect, buf, &n_max)) {
-                ERR_clear_error();
+            if (!app_conf_try_number(req_conf, dn_sect, buf, &n_max))
                 n_max = -1;
-            }
 
             if (!add_DN_object(subj, v->value, def, value, nid,
                                n_min, n_max, chtype, mval))
@@ -1246,33 +1234,23 @@ static int prompt_info(X509_REQ *req,
 
                 if (!join(buf, sizeof(buf), type, "_default", "Name"))
                     return 0;
-                if ((def = NCONF_get_string(req_conf, attr_sect, buf))
-                    == NULL) {
-                    ERR_clear_error();
+                def = app_conf_try_string(req_conf, attr_sect, buf);
+                if (def == NULL)
                     def = "";
-                }
 
                 if (!join(buf, sizeof(buf), type, "_value", "Name"))
                     return 0;
-                if ((value = NCONF_get_string(req_conf, attr_sect, buf))
-                    == NULL) {
-                    ERR_clear_error();
-                    value = NULL;
-                }
+                value = app_conf_try_string(req_conf, attr_sect, buf);
 
                 if (!join(buf, sizeof(buf), type, "_min", "Name"))
                     return 0;
-                if (!NCONF_get_number(req_conf, attr_sect, buf, &n_min)) {
-                    ERR_clear_error();
+                if (!app_conf_try_number(req_conf, attr_sect, buf, &n_min))
                     n_min = -1;
-                }
 
                 if (!join(buf, sizeof(buf), type, "_max", "Name"))
                     return 0;
-                if (!NCONF_get_number(req_conf, attr_sect, buf, &n_max)) {
-                    ERR_clear_error();
+                if (!app_conf_try_number(req_conf, attr_sect, buf, &n_max))
                     n_max = -1;
-                }
 
                 if (!add_attribute_object(req,
                                           v->value, def, value, nid, n_min,

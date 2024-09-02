@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -24,7 +24,7 @@
  */
 
 /*
- * An OSSL_RECORD_METHOD is a protcol specific method which provides the
+ * An OSSL_RECORD_METHOD is a protocol specific method which provides the
  * functions for reading and writing records for that protocol. Which
  * OSSL_RECORD_METHOD to use for a given protocol is defined by the SSL_METHOD.
  */
@@ -63,7 +63,7 @@ typedef struct ossl_record_layer_st OSSL_RECORD_LAYER;
  * buffer of payload data in |buf| of length |buflen|.
  */
 struct ossl_record_template_st {
-    int type;
+    unsigned char type;
     unsigned int version;
     const unsigned char *buf;
     size_t buflen;
@@ -161,7 +161,7 @@ struct ossl_record_method_st {
     int (*processed_read_pending)(OSSL_RECORD_LAYER *rl);
 
     /*
-     * The amount of processed app data that is internally bufferred and
+     * The amount of processed app data that is internally buffered and
      * available to read
      */
     size_t (*app_data_pending)(OSSL_RECORD_LAYER *rl);
@@ -179,7 +179,7 @@ struct ossl_record_method_st {
      * exit the record layer may update this to an alternative fragment size to
      * be used. This must always be less than or equal to |maxfrag|.
      */
-    size_t (*get_max_records)(OSSL_RECORD_LAYER *rl, int type, size_t len,
+    size_t (*get_max_records)(OSSL_RECORD_LAYER *rl, uint8_t type, size_t len,
                               size_t maxfrag, size_t *preffrag);
 
     /*
@@ -225,20 +225,22 @@ struct ossl_record_method_st {
      * filled in with the epoch and sequence number from the record.
      * An opaque record layer handle for the record is returned in |*rechandle|
      * which is used in a subsequent call to |release_record|. The buffer must
-     * remain available until release_record is called.
+     * remain available until all the bytes from record are released via one or
+     * more release_record calls.
      *
-     * Internally the the OSSL_RECORD_METHOD the implementation may read/process
+     * Internally the OSSL_RECORD_METHOD implementation may read/process
      * multiple records in one go and buffer them.
      */
     int (*read_record)(OSSL_RECORD_LAYER *rl, void **rechandle, int *rversion,
-                      int *type, unsigned char **data, size_t *datalen,
+                      uint8_t *type, const unsigned char **data, size_t *datalen,
                       uint16_t *epoch, unsigned char *seq_num);
     /*
-     * Release a buffer associated with a record previously read with
-     * read_record. Records are guaranteed to be released in the order that they
-     * are read.
+     * Release length bytes from a buffer associated with a record previously
+     * read with read_record. Once all the bytes from a record are released, the
+     * whole record and its associated buffer is released. Records are
+     * guaranteed to be released in the order that they are read.
      */
-    int (*release_record)(OSSL_RECORD_LAYER *rl, void *rechandle);
+    int (*release_record)(OSSL_RECORD_LAYER *rl, void *rechandle, size_t length);
 
     /*
      * In the event that a fatal error is returned from the functions above then

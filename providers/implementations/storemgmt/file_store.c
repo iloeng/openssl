@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -55,9 +55,7 @@ static OSSL_FUNC_store_close_fn file_close;
  * passes that on to the data callback; this decoder is created with
  * internal OpenSSL functions, thereby bypassing the need for a surrounding
  * provider.  This is ok, since this is a local decoder, not meant for
- * public consumption.  It also uses the libcrypto internal decoder
- * setup function ossl_decoder_ctx_setup_for_pkey(), to allow the
- * last resort decoder to be added first (and thereby be executed last).
+ * public consumption.
  * Finally, it sets up its own construct and cleanup functions.
  *
  * Essentially, that makes this implementation a kind of glorified decoder.
@@ -608,9 +606,9 @@ static int file_name_check(struct file_ctx_st *ctx, const char *name)
      * Last, check that the rest of the extension is a decimal number, at
      * least one digit long.
      */
-    if (!isdigit(*p))
+    if (!isdigit((unsigned char)*p))
         return 0;
-    while (isdigit(*p))
+    while (isdigit((unsigned char)*p))
         p++;
 
 #ifdef __VMS
@@ -619,7 +617,7 @@ static int file_name_check(struct file_ctx_st *ctx, const char *name)
      */
     if (*p == ';')
         for (p++; *p != '\0'; p++)
-            if (!ossl_isdigit(*p))
+            if (!ossl_isdigit((unsigned char)*p))
                 break;
 #endif
 
@@ -782,5 +780,5 @@ const OSSL_DISPATCH ossl_file_store_functions[] = {
     { OSSL_FUNC_STORE_LOAD, (void (*)(void))file_load },
     { OSSL_FUNC_STORE_EOF, (void (*)(void))file_eof },
     { OSSL_FUNC_STORE_CLOSE, (void (*)(void))file_close },
-    { 0, NULL },
+    OSSL_DISPATCH_END,
 };

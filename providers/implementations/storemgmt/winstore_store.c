@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -23,7 +23,9 @@
 #include "prov/implementations.h"
 #include "prov/bio.h"
 #include "file_store_local.h"
-
+#ifdef __CYGWIN__
+# include <windows.h>
+#endif
 #include <wincrypt.h>
 
 enum {
@@ -323,5 +325,5 @@ const OSSL_DISPATCH ossl_winstore_store_functions[] = {
     { OSSL_FUNC_STORE_LOAD, (void (*)(void))winstore_load },
     { OSSL_FUNC_STORE_EOF, (void (*)(void))winstore_eof },
     { OSSL_FUNC_STORE_CLOSE, (void (*)(void))winstore_close },
-    { 0, NULL },
+    OSSL_DISPATCH_END,
 };

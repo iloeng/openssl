@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -41,12 +41,6 @@ typedef unsigned int u_int;
 # include "s_apps.h"
 # include "internal/sockets.h"
 
-# if defined(__TANDEM)
-#  if defined(OPENSSL_TANDEM_FLOSS)
-#   include <floss.h(floss_read)>
-#  endif
-# endif
-
 # include <openssl/bio.h>
 # include <openssl/err.h>
 
@@ -65,7 +59,8 @@ BIO_ADDR *ourpeer = NULL;
  * @type: socket type, must be SOCK_STREAM or SOCK_DGRAM
  * @protocol: socket protocol, e.g. IPPROTO_TCP or IPPROTO_UDP (or 0 for any)
  * @tfo: flag to enable TCP Fast Open
- * @ba_ret: BIO_ADDR that was connected to for TFO, to be freed by caller
+ * @doconn: whether we should call BIO_connect() on the socket
+ * @ba_ret: BIO_ADDR for the remote peer, to be freed by caller
  *
  * This will create a socket and use it to connect to a host:port, or if
  * family == AF_UNIX, to the path found in host.
@@ -78,7 +73,7 @@ BIO_ADDR *ourpeer = NULL;
  */
 int init_client(int *sock, const char *host, const char *port,
                 const char *bindhost, const char *bindport,
-                int family, int type, int protocol, int tfo,
+                int family, int type, int protocol, int tfo, int doconn,
                 BIO_ADDR **ba_ret)
 {
     BIO_ADDRINFO *res = NULL;
@@ -88,9 +83,6 @@ int init_client(int *sock, const char *host, const char *port,
     int found = 0;
     int ret;
     int options = 0;
-
-    if (tfo && ba_ret != NULL)
-        *ba_ret = NULL;
 
     if (BIO_sock_init() != 1)
         return 0;
@@ -173,14 +165,14 @@ int init_client(int *sock, const char *host, const char *port,
                 options |= BIO_SOCK_TFO;
         }
 
-        if (!BIO_connect(*sock, BIO_ADDRINFO_address(ai), options)) {
+        if (doconn && !BIO_connect(*sock, BIO_ADDRINFO_address(ai), options)) {
             BIO_closesocket(*sock);
             *sock = INVALID_SOCKET;
             continue;
         }
 
         /* Save the address */
-        if (tfo && ba_ret != NULL)
+        if (tfo || !doconn)
             *ba_ret = BIO_ADDR_dup(BIO_ADDRINFO_address(ai));
 
         /* Success, don't try any more addresses */
@@ -207,7 +199,7 @@ int init_client(int *sock, const char *host, const char *port,
 
         hostname = BIO_ADDR_hostname_string(BIO_ADDRINFO_address(ai), 1);
         if (hostname != NULL) {
-            BIO_printf(bio_out, "Connecting to %s\n", hostname);
+            BIO_printf(bio_err, "Connecting to %s\n", hostname);
             OPENSSL_free(hostname);
         }
         /* Remove any stale errors from previous connection attempts */

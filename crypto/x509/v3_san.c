@@ -88,7 +88,7 @@ STACK_OF(CONF_VALUE) *i2v_GENERAL_NAME(X509V3_EXT_METHOD *method,
         switch (OBJ_obj2nid(gen->d.otherName->type_id)) {
         case NID_id_on_SmtpUTF8Mailbox:
             if (gen->d.otherName->value->type != V_ASN1_UTF8STRING
-                    || !x509v3_add_len_value_uchar("othername: SmtpUTF8Mailbox:",
+                    || !x509v3_add_len_value_uchar("othername: SmtpUTF8Mailbox",
                             gen->d.otherName->value->value.utf8string->data,
                             gen->d.otherName->value->value.utf8string->length,
                             &ret))
@@ -96,7 +96,7 @@ STACK_OF(CONF_VALUE) *i2v_GENERAL_NAME(X509V3_EXT_METHOD *method,
             break;
         case NID_XmppAddr:
             if (gen->d.otherName->value->type != V_ASN1_UTF8STRING
-                    || !x509v3_add_len_value_uchar("othername: XmppAddr:",
+                    || !x509v3_add_len_value_uchar("othername: XmppAddr",
                             gen->d.otherName->value->value.utf8string->data,
                             gen->d.otherName->value->value.utf8string->length,
                             &ret))
@@ -104,7 +104,7 @@ STACK_OF(CONF_VALUE) *i2v_GENERAL_NAME(X509V3_EXT_METHOD *method,
             break;
         case NID_SRVName:
             if (gen->d.otherName->value->type != V_ASN1_IA5STRING
-                    || !x509v3_add_len_value_uchar("othername: SRVName:",
+                    || !x509v3_add_len_value_uchar("othername: SRVName",
                             gen->d.otherName->value->value.ia5string->data,
                             gen->d.otherName->value->value.ia5string->length,
                             &ret))
@@ -112,7 +112,7 @@ STACK_OF(CONF_VALUE) *i2v_GENERAL_NAME(X509V3_EXT_METHOD *method,
             break;
         case NID_ms_upn:
             if (gen->d.otherName->value->type != V_ASN1_UTF8STRING
-                    || !x509v3_add_len_value_uchar("othername: UPN:",
+                    || !x509v3_add_len_value_uchar("othername: UPN",
                             gen->d.otherName->value->value.utf8string->data,
                             gen->d.otherName->value->value.utf8string->length,
                             &ret))
@@ -120,32 +120,32 @@ STACK_OF(CONF_VALUE) *i2v_GENERAL_NAME(X509V3_EXT_METHOD *method,
             break;
         case NID_NAIRealm:
             if (gen->d.otherName->value->type != V_ASN1_UTF8STRING
-                    || !x509v3_add_len_value_uchar("othername: NAIRealm:",
+                    || !x509v3_add_len_value_uchar("othername: NAIRealm",
                             gen->d.otherName->value->value.utf8string->data,
                             gen->d.otherName->value->value.utf8string->length,
                             &ret))
                 return NULL;
             break;
         default:
-            if (OBJ_obj2txt(oline, sizeof(oline), gen->d.otherName->type_id, 0) > 0) 
-                BIO_snprintf(othername, sizeof(othername), "othername: %s:",
+            if (OBJ_obj2txt(oline, sizeof(oline), gen->d.otherName->type_id, 0) > 0)
+                BIO_snprintf(othername, sizeof(othername), "othername: %s",
                              oline);
             else
-                OPENSSL_strlcpy(othername, "othername:", sizeof(othername));
+                OPENSSL_strlcpy(othername, "othername", sizeof(othername));
 
             /* check if the value is something printable */
             if (gen->d.otherName->value->type == V_ASN1_IA5STRING) {
                 if (x509v3_add_len_value_uchar(othername,
                              gen->d.otherName->value->value.ia5string->data,
                              gen->d.otherName->value->value.ia5string->length,
-                             &ret)) 
+                             &ret))
                     return ret;
             }
             if (gen->d.otherName->value->type == V_ASN1_UTF8STRING) {
                 if (x509v3_add_len_value_uchar(othername,
                              gen->d.otherName->value->value.utf8string->data,
                              gen->d.otherName->value->value.utf8string->length,
-                             &ret)) 
+                             &ret))
                     return ret;
             }
             if (!X509V3_add_value(othername, "<unsupported>", &ret))
@@ -581,6 +581,8 @@ GENERAL_NAME *a2i_GENERAL_NAME(GENERAL_NAME *out,
         if ((gen->d.ia5 = ASN1_IA5STRING_new()) == NULL ||
             !ASN1_STRING_set(gen->d.ia5, (unsigned char *)value,
                              strlen(value))) {
+            ASN1_IA5STRING_free(gen->d.ia5);
+            gen->d.ia5 = NULL;
             ERR_raise(ERR_LIB_X509V3, ERR_R_ASN1_LIB);
             goto err;
         }
@@ -651,16 +653,21 @@ static int do_othername(GENERAL_NAME *gen, const char *value, X509V3_CTX *ctx)
      */
     ASN1_TYPE_free(gen->d.otherName->value);
     if ((gen->d.otherName->value = ASN1_generate_v3(p + 1, ctx)) == NULL)
-        return 0;
+        goto err;
     objlen = p - value;
     objtmp = OPENSSL_strndup(value, objlen);
     if (objtmp == NULL)
-        return 0;
+        goto err;
     gen->d.otherName->type_id = OBJ_txt2obj(objtmp, 0);
     OPENSSL_free(objtmp);
     if (!gen->d.otherName->type_id)
-        return 0;
+        goto err;
     return 1;
+
+ err:
+    OTHERNAME_free(gen->d.otherName);
+    gen->d.otherName = NULL;
+    return 0;
 }
 
 static int do_dirname(GENERAL_NAME *gen, const char *value, X509V3_CTX *ctx)

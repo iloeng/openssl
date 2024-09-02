@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -120,18 +120,22 @@ int ossl_crypto_mutex_try_lock(CRYPTO_MUTEX *mutex)
 
 void ossl_crypto_mutex_lock(CRYPTO_MUTEX *mutex)
 {
+    int rc;
     pthread_mutex_t *mutex_p;
 
     mutex_p = (pthread_mutex_t *)mutex;
-    pthread_mutex_lock(mutex_p);
+    rc = pthread_mutex_lock(mutex_p);
+    OPENSSL_assert(rc == 0);
 }
 
 void ossl_crypto_mutex_unlock(CRYPTO_MUTEX *mutex)
 {
+    int rc;
     pthread_mutex_t *mutex_p;
 
     mutex_p = (pthread_mutex_t *)mutex;
-    pthread_mutex_unlock(mutex_p);
+    rc = pthread_mutex_unlock(mutex_p);
+    OPENSSL_assert(rc == 0);
 }
 
 void ossl_crypto_mutex_free(CRYPTO_MUTEX **mutex)
@@ -171,12 +175,45 @@ void ossl_crypto_condvar_wait(CRYPTO_CONDVAR *cv, CRYPTO_MUTEX *mutex)
     pthread_cond_wait(cv_p, mutex_p);
 }
 
+void ossl_crypto_condvar_wait_timeout(CRYPTO_CONDVAR *cv, CRYPTO_MUTEX *mutex,
+                                      OSSL_TIME deadline)
+{
+    pthread_cond_t *cv_p = (pthread_cond_t *)cv;
+    pthread_mutex_t *mutex_p = (pthread_mutex_t *)mutex;
+
+    if (ossl_time_is_infinite(deadline)) {
+        /*
+         * No deadline. Some pthread implementations allow
+         * pthread_cond_timedwait to work the same as pthread_cond_wait when
+         * abstime is NULL, but it is unclear whether this is POSIXly correct.
+         */
+        pthread_cond_wait(cv_p, mutex_p);
+    } else {
+        struct timespec deadline_ts;
+
+        deadline_ts.tv_sec
+            = ossl_time2seconds(deadline);
+        deadline_ts.tv_nsec
+            = (ossl_time2ticks(deadline) % OSSL_TIME_SECOND) / OSSL_TIME_NS;
+
+        pthread_cond_timedwait(cv_p, mutex_p, &deadline_ts);
+    }
+}
+
 void ossl_crypto_condvar_broadcast(CRYPTO_CONDVAR *cv)
 {
     pthread_cond_t *cv_p;
 
     cv_p = (pthread_cond_t *)cv;
     pthread_cond_broadcast(cv_p);
+}
+
+void ossl_crypto_condvar_signal(CRYPTO_CONDVAR *cv)
+{
+    pthread_cond_t *cv_p;
+
+    cv_p = (pthread_cond_t *)cv;
+    pthread_cond_signal(cv_p);
 }
 
 void ossl_crypto_condvar_free(CRYPTO_CONDVAR **cv)

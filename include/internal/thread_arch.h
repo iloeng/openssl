@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -11,6 +11,7 @@
 # define OSSL_INTERNAL_THREAD_ARCH_H
 # include <openssl/configuration.h>
 # include <openssl/e_os2.h>
+# include "internal/time.h"
 
 # if defined(_WIN32)
 #  include <windows.h>
@@ -24,6 +25,9 @@
     defined(_WIN32_WINNT)
 #  if _WIN32_WINNT >= 0x0600
 #   define OPENSSL_THREADS_WINNT
+#  elif _WIN32_WINNT >= 0x0501
+#   define OPENSSL_THREADS_WINNT
+#   define OPENSSL_THREADS_WINNT_LEGACY
 #  else
 #   define OPENSSL_THREADS_NONE
 #  endif
@@ -33,8 +37,8 @@
 
 # include <openssl/crypto.h>
 
-typedef void CRYPTO_MUTEX;
-typedef void CRYPTO_CONDVAR;
+typedef struct crypto_mutex_st CRYPTO_MUTEX;
+typedef struct crypto_condvar_st CRYPTO_CONDVAR;
 
 CRYPTO_MUTEX *ossl_crypto_mutex_new(void);
 void ossl_crypto_mutex_lock(CRYPTO_MUTEX *mutex);
@@ -44,7 +48,10 @@ void ossl_crypto_mutex_free(CRYPTO_MUTEX **mutex);
 
 CRYPTO_CONDVAR *ossl_crypto_condvar_new(void);
 void ossl_crypto_condvar_wait(CRYPTO_CONDVAR *cv, CRYPTO_MUTEX *mutex);
+void ossl_crypto_condvar_wait_timeout(CRYPTO_CONDVAR *cv, CRYPTO_MUTEX *mutex,
+                                      OSSL_TIME deadline);
 void ossl_crypto_condvar_broadcast(CRYPTO_CONDVAR *cv);
+void ossl_crypto_condvar_signal(CRYPTO_CONDVAR *cv);
 void ossl_crypto_condvar_free(CRYPTO_CONDVAR **cv);
 
 typedef uint32_t CRYPTO_THREAD_RETVAL;

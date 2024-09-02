@@ -31,6 +31,7 @@ B<openssl> B<enc>|I<cipher>
 [B<-md> I<digest>]
 [B<-iter> I<count>]
 [B<-pbkdf2>]
+[B<-saltlen> I<size>]
 [B<-p>]
 [B<-P>]
 [B<-bufsize> I<number>]
@@ -97,13 +98,19 @@ Base64 process the data. This means that if encryption is taking place
 the data is base64 encoded after encryption. If decryption is set then
 the input data is base64 decoded before being decrypted.
 
+When the B<-A> option not given,
+on encoding a newline is inserted after each 64 characters, and
+on decoding a newline is expected among the first 1024 bytes of input.
+
 =item B<-base64>
 
 Same as B<-a>
 
 =item B<-A>
 
-If the B<-a> option is set then base64 process the data on one line.
+If the B<-a> option is set then base64 encoding produces output without any
+newline character, and base64 decoding does not require any newlines.
+Therefore it can be helpful to use the B<-A> option when decoding unknown input.
 
 =item B<-k> I<password>
 
@@ -132,6 +139,15 @@ This option enables the use of PBKDF2 algorithm to derive the key.
 Use PBKDF2 algorithm with a default iteration count of 10000
 unless otherwise specified by the B<-iter> command line option.
 
+=item B<-saltlen>
+
+Set the salt length to use when using the B<-pbkdf2> option.
+For compatibility reasons, the default is 8 bytes.
+The maximum value is currently 16 bytes.
+If the B<-pbkdf2> option is not used, then this option is ignored
+and a fixed salt length of 8 is used. The salt length used when
+encrypting must also be used when decrypting.
+
 =item B<-nosalt>
 
 Don't use a salt in the key derivation routines. This option B<SHOULD NOT> be
@@ -147,7 +163,8 @@ encrypting, this is the default.
 
 The actual salt to use: this must be represented as a string of hex digits.
 If this option is used while encrypting, the same exact value will be needed
-again during decryption.
+again during decryption. This salt may be truncated or zero padded to
+match the salt length (See B<-saltlen>).
 
 =item B<-K> I<key>
 
@@ -452,6 +469,9 @@ or
 =head1 BUGS
 
 The B<-A> option when used with large files doesn't work properly.
+On the other hand, when base64 decoding without the B<-A> option,
+if the first 1024 bytes of input do not include a newline character
+the first two lines of input are ignored.
 
 The B<openssl enc> command only supports a fixed number of algorithms with
 certain parameters. So if, for example, you want to use RC2 with a
@@ -465,9 +485,11 @@ The B<-list> option was added in OpenSSL 1.1.1e.
 
 The B<-ciphers> and B<-engine> options were deprecated in OpenSSL 3.0.
 
+The B<-saltlen> option was added in OpenSSL 3.2.
+
 =head1 COPYRIGHT
 
-Copyright 2000-2022 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2023 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

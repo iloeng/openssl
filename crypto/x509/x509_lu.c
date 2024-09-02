@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -42,6 +42,11 @@ void X509_LOOKUP_free(X509_LOOKUP *ctx)
 int X509_STORE_lock(X509_STORE *xs)
 {
     return CRYPTO_THREAD_write_lock(xs->lock);
+}
+
+static int x509_store_read_lock(X509_STORE *xs)
+{
+    return CRYPTO_THREAD_read_lock(xs->lock);
 }
 
 int X509_STORE_unlock(X509_STORE *xs)
@@ -204,13 +209,16 @@ X509_STORE *X509_STORE_new(void)
         ERR_raise(ERR_LIB_X509, ERR_R_CRYPTO_LIB);
         goto err;
     }
-    ret->references = 1;
+
+    if (!CRYPTO_NEW_REF(&ret->references, 1))
+        goto err;
     return ret;
 
 err:
     X509_VERIFY_PARAM_free(ret->param);
     sk_X509_OBJECT_free(ret->objs);
     sk_X509_LOOKUP_free(ret->get_cert_methods);
+    CRYPTO_THREAD_lock_free(ret->lock);
     OPENSSL_free(ret);
     return NULL;
 }
@@ -223,7 +231,7 @@ void X509_STORE_free(X509_STORE *xs)
 
     if (xs == NULL)
         return;
-    CRYPTO_DOWN_REF(&xs->references, &i, xs->lock);
+    CRYPTO_DOWN_REF(&xs->references, &i);
     REF_PRINT_COUNT("X509_STORE", xs);
     if (i > 0)
         return;
@@ -241,6 +249,7 @@ void X509_STORE_free(X509_STORE *xs)
     CRYPTO_free_ex_data(CRYPTO_EX_INDEX_X509_STORE, xs, &xs->ex_data);
     X509_VERIFY_PARAM_free(xs->param);
     CRYPTO_THREAD_lock_free(xs->lock);
+    CRYPTO_FREE_REF(&xs->references);
     OPENSSL_free(xs);
 }
 
@@ -248,7 +257,7 @@ int X509_STORE_up_ref(X509_STORE *xs)
 {
     int i;
 
-    if (CRYPTO_UP_REF(&xs->references, &i, xs->lock) <= 0)
+    if (CRYPTO_UP_REF(&xs->references, &i) <= 0)
         return 0;
 
     REF_PRINT_COUNT("X509_STORE", xs);
@@ -324,8 +333,20 @@ static int ossl_x509_store_ctx_get_by_subject(const X509_STORE_CTX *ctx,
     stmp.type = X509_LU_NONE;
     stmp.data.ptr = NULL;
 
-    if (!X509_STORE_lock(store))
+    if (!x509_store_read_lock(store))
         return 0;
+    /* Should already be sorted...but just in case */
+    if (!sk_X509_OBJECT_is_sorted(store->objs)) {
+        X509_STORE_unlock(store);
+        /* Take a write lock instead of a read lock */
+        if (!X509_STORE_lock(store))
+            return 0;
+        /*
+         * Another thread might have sorted it in the meantime. But if so,
+         * sk_X509_OBJECT_sort() exits early.
+         */
+        sk_X509_OBJECT_sort(store->objs);
+    }
     tmp = X509_OBJECT_retrieve_by_subject(store->objs, type, name);
     X509_STORE_unlock(store);
 
@@ -534,15 +555,18 @@ static int x509_object_idx_cnt(STACK_OF(X509_OBJECT) *h, X509_LOOKUP_TYPE type,
         return -1;
     }
 
+    /* Assumes h is locked for read if applicable */
     return sk_X509_OBJECT_find_all(h, &stmp, pnmatch);
 }
 
+/* Assumes h is locked for read if applicable */
 int X509_OBJECT_idx_by_subject(STACK_OF(X509_OBJECT) *h, X509_LOOKUP_TYPE type,
                                const X509_NAME *name)
 {
     return x509_object_idx_cnt(h, type, name, NULL);
 }
 
+/* Assumes h is locked for read if applicable */
 X509_OBJECT *X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h,
                                              X509_LOOKUP_TYPE type,
                                              const X509_NAME *name)
@@ -557,6 +581,36 @@ X509_OBJECT *X509_OBJECT_retrieve_by_subject(STACK_OF(X509_OBJECT) *h,
 STACK_OF(X509_OBJECT) *X509_STORE_get0_objects(const X509_STORE *xs)
 {
     return xs->objs;
+}
+
+static X509_OBJECT *x509_object_dup(const X509_OBJECT *obj)
+{
+    X509_OBJECT *ret = X509_OBJECT_new();
+    if (ret == NULL)
+        return NULL;
+
+    ret->type = obj->type;
+    ret->data = obj->data;
+    X509_OBJECT_up_ref_count(ret);
+    return ret;
+}
+
+STACK_OF(X509_OBJECT) *X509_STORE_get1_objects(X509_STORE *store)
+{
+    STACK_OF(X509_OBJECT) *objs;
+
+    if (store == NULL) {
+        ERR_raise(ERR_LIB_X509, ERR_R_PASSED_NULL_PARAMETER);
+        return NULL;
+    }
+
+    if (!x509_store_read_lock(store))
+        return NULL;
+
+    objs = sk_X509_OBJECT_deep_copy(store->objs, x509_object_dup,
+                                    X509_OBJECT_free);
+    X509_STORE_unlock(store);
+    return objs;
 }
 
 STACK_OF(X509) *X509_STORE_get1_all_certs(X509_STORE *store)
@@ -574,6 +628,7 @@ STACK_OF(X509) *X509_STORE_get1_all_certs(X509_STORE *store)
     if (!X509_STORE_lock(store))
         goto out_free;
 
+    sk_X509_OBJECT_sort(store->objs);
     objs = X509_STORE_get0_objects(store);
     for (i = 0; i < sk_X509_OBJECT_num(objs); i++) {
         X509 *cert = X509_OBJECT_get0_X509(sk_X509_OBJECT_value(objs, i));
@@ -608,6 +663,7 @@ STACK_OF(X509) *X509_STORE_CTX_get1_certs(X509_STORE_CTX *ctx,
     if (!X509_STORE_lock(store))
         return NULL;
 
+    sk_X509_OBJECT_sort(store->objs);
     idx = x509_object_idx_cnt(store->objs, X509_LU_X509, nm, &cnt);
     if (idx < 0) {
         /*
@@ -627,6 +683,7 @@ STACK_OF(X509) *X509_STORE_CTX_get1_certs(X509_STORE_CTX *ctx,
         X509_OBJECT_free(xobj);
         if (!X509_STORE_lock(store))
             return NULL;
+        sk_X509_OBJECT_sort(store->objs);
         idx = x509_object_idx_cnt(store->objs, X509_LU_X509, nm, &cnt);
         if (idx < 0) {
             sk = sk_X509_new_null();
@@ -677,6 +734,7 @@ STACK_OF(X509_CRL) *X509_STORE_CTX_get1_crls(const X509_STORE_CTX *ctx,
         sk_X509_CRL_free(sk);
         return NULL;
     }
+    sk_X509_OBJECT_sort(store->objs);
     idx = x509_object_idx_cnt(store->objs, X509_LU_CRL, nm, &cnt);
     if (idx < 0) {
         X509_STORE_unlock(store);
@@ -781,6 +839,7 @@ int X509_STORE_CTX_get1_issuer(X509 **issuer, X509_STORE_CTX *ctx, X509 *x)
     if (!X509_STORE_lock(store))
         return 0;
 
+    sk_X509_OBJECT_sort(store->objs);
     idx = x509_object_idx_cnt(store->objs, X509_LU_X509, xn, &nmatch);
     if (idx != -1) { /* should be true as we've had at least one match */
         /* Look through all matching certs for suitable issuer */

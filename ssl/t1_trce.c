@@ -446,6 +446,8 @@ static const ssl_trace_tbl ssl_ciphers_tbl[] = {
     {0xFEFF, "SSL_RSA_FIPS_WITH_3DES_EDE_CBC_SHA"},
     {0xFF85, "LEGACY-GOST2012-GOST8912-GOST8912"},
     {0xFF87, "GOST2012-NULL-GOST12"},
+    {0xC0B4, "TLS_SHA256_SHA256"},
+    {0xC0B5, "TLS_SHA384_SHA384"},
     {0xC100, "GOST2012-KUZNYECHIK-KUZNYECHIKOMAC"},
     {0xC101, "GOST2012-MAGMA-MAGMAOMAC"},
     {0xC102, "GOST2012-GOST8912-IANA"},
@@ -545,6 +547,8 @@ static const ssl_trace_tbl ssl_groups_tbl[] = {
     {258, "ffdhe4096"},
     {259, "ffdhe6144"},
     {260, "ffdhe8192"},
+    {25497, "X25519Kyber768Draft00"},
+    {25498, "SecP256r1Kyber768Draft00"},
     {0xFF01, "arbitrary_explicit_prime_curves"},
     {0xFF02, "arbitrary_explicit_char2_curves"}
 };
@@ -564,37 +568,37 @@ static const ssl_trace_tbl ssl_mfl_tbl[] = {
 };
 
 static const ssl_trace_tbl ssl_sigalg_tbl[] = {
-    {TLSEXT_SIGALG_ecdsa_secp256r1_sha256, "ecdsa_secp256r1_sha256"},
-    {TLSEXT_SIGALG_ecdsa_secp384r1_sha384, "ecdsa_secp384r1_sha384"},
-    {TLSEXT_SIGALG_ecdsa_secp521r1_sha512, "ecdsa_secp521r1_sha512"},
-    {TLSEXT_SIGALG_ecdsa_sha224, "ecdsa_sha224"},
-    {TLSEXT_SIGALG_ed25519, "ed25519"},
-    {TLSEXT_SIGALG_ed448, "ed448"},
-    {TLSEXT_SIGALG_ecdsa_sha1, "ecdsa_sha1"},
-    {TLSEXT_SIGALG_rsa_pss_rsae_sha256, "rsa_pss_rsae_sha256"},
-    {TLSEXT_SIGALG_rsa_pss_rsae_sha384, "rsa_pss_rsae_sha384"},
-    {TLSEXT_SIGALG_rsa_pss_rsae_sha512, "rsa_pss_rsae_sha512"},
-    {TLSEXT_SIGALG_rsa_pss_pss_sha256, "rsa_pss_pss_sha256"},
-    {TLSEXT_SIGALG_rsa_pss_pss_sha384, "rsa_pss_pss_sha384"},
-    {TLSEXT_SIGALG_rsa_pss_pss_sha512, "rsa_pss_pss_sha512"},
-    {TLSEXT_SIGALG_rsa_pkcs1_sha256, "rsa_pkcs1_sha256"},
-    {TLSEXT_SIGALG_rsa_pkcs1_sha384, "rsa_pkcs1_sha384"},
-    {TLSEXT_SIGALG_rsa_pkcs1_sha512, "rsa_pkcs1_sha512"},
-    {TLSEXT_SIGALG_rsa_pkcs1_sha224, "rsa_pkcs1_sha224"},
-    {TLSEXT_SIGALG_rsa_pkcs1_sha1, "rsa_pkcs1_sha1"},
-    {TLSEXT_SIGALG_dsa_sha256, "dsa_sha256"},
-    {TLSEXT_SIGALG_dsa_sha384, "dsa_sha384"},
-    {TLSEXT_SIGALG_dsa_sha512, "dsa_sha512"},
-    {TLSEXT_SIGALG_dsa_sha224, "dsa_sha224"},
-    {TLSEXT_SIGALG_dsa_sha1, "dsa_sha1"},
-    {TLSEXT_SIGALG_gostr34102012_256_intrinsic, "gost2012_256"},
-    {TLSEXT_SIGALG_gostr34102012_512_intrinsic, "gost2012_512"},
-    {TLSEXT_SIGALG_gostr34102012_256_gostr34112012_256, "gost2012_256"},
-    {TLSEXT_SIGALG_gostr34102012_512_gostr34112012_512, "gost2012_512"},
-    {TLSEXT_SIGALG_gostr34102001_gostr3411, "gost2001_gost94"},
-    {TLSEXT_SIGALG_ecdsa_brainpoolP256r1_sha256, "ecdsa_brainpoolP256r1_sha256"},
-    {TLSEXT_SIGALG_ecdsa_brainpoolP384r1_sha384, "ecdsa_brainpoolP384r1_sha384"},
-    {TLSEXT_SIGALG_ecdsa_brainpoolP512r1_sha512, "ecdsa_brainpoolP512r1_sha512"},
+    {TLSEXT_SIGALG_ecdsa_secp256r1_sha256, TLSEXT_SIGALG_ecdsa_secp256r1_sha256_name},
+    {TLSEXT_SIGALG_ecdsa_secp384r1_sha384, TLSEXT_SIGALG_ecdsa_secp384r1_sha384_name},
+    {TLSEXT_SIGALG_ecdsa_secp521r1_sha512,TLSEXT_SIGALG_ecdsa_secp521r1_sha512_name},
+    {TLSEXT_SIGALG_ecdsa_sha224, TLSEXT_SIGALG_ecdsa_sha224_name},
+    {TLSEXT_SIGALG_ed25519, TLSEXT_SIGALG_ed25519_name},
+    {TLSEXT_SIGALG_ed448, TLSEXT_SIGALG_ed448_name},
+    {TLSEXT_SIGALG_ecdsa_sha1, TLSEXT_SIGALG_ecdsa_sha1_name},
+    {TLSEXT_SIGALG_rsa_pss_rsae_sha256, TLSEXT_SIGALG_rsa_pss_rsae_sha256_name},
+    {TLSEXT_SIGALG_rsa_pss_rsae_sha384, TLSEXT_SIGALG_rsa_pss_rsae_sha384_name},
+    {TLSEXT_SIGALG_rsa_pss_rsae_sha512, TLSEXT_SIGALG_rsa_pss_rsae_sha512_name},
+    {TLSEXT_SIGALG_rsa_pss_pss_sha256, TLSEXT_SIGALG_rsa_pss_pss_sha256_name},
+    {TLSEXT_SIGALG_rsa_pss_pss_sha384, TLSEXT_SIGALG_rsa_pss_pss_sha384_name},
+    {TLSEXT_SIGALG_rsa_pss_pss_sha512, TLSEXT_SIGALG_rsa_pss_pss_sha512_name},
+    {TLSEXT_SIGALG_rsa_pkcs1_sha256, TLSEXT_SIGALG_rsa_pkcs1_sha256_name},
+    {TLSEXT_SIGALG_rsa_pkcs1_sha384, TLSEXT_SIGALG_rsa_pkcs1_sha384_name},
+    {TLSEXT_SIGALG_rsa_pkcs1_sha512, TLSEXT_SIGALG_rsa_pkcs1_sha512_name},
+    {TLSEXT_SIGALG_rsa_pkcs1_sha224, TLSEXT_SIGALG_rsa_pkcs1_sha224_name},
+    {TLSEXT_SIGALG_rsa_pkcs1_sha1, TLSEXT_SIGALG_rsa_pkcs1_sha1_name},
+    {TLSEXT_SIGALG_dsa_sha256, TLSEXT_SIGALG_dsa_sha256_name},
+    {TLSEXT_SIGALG_dsa_sha384, TLSEXT_SIGALG_dsa_sha384_name},
+    {TLSEXT_SIGALG_dsa_sha512, TLSEXT_SIGALG_dsa_sha512_name},
+    {TLSEXT_SIGALG_dsa_sha224, TLSEXT_SIGALG_dsa_sha224_name},
+    {TLSEXT_SIGALG_dsa_sha1, TLSEXT_SIGALG_dsa_sha1_name},
+    {TLSEXT_SIGALG_gostr34102012_256_intrinsic, TLSEXT_SIGALG_gostr34102012_256_intrinsic_name},
+    {TLSEXT_SIGALG_gostr34102012_512_intrinsic, TLSEXT_SIGALG_gostr34102012_512_intrinsic_name},
+    {TLSEXT_SIGALG_gostr34102012_256_gostr34112012_256, TLSEXT_SIGALG_gostr34102012_256_gostr34112012_256_name},
+    {TLSEXT_SIGALG_gostr34102012_512_gostr34112012_512, TLSEXT_SIGALG_gostr34102012_512_gostr34112012_512_name},
+    {TLSEXT_SIGALG_gostr34102001_gostr3411, TLSEXT_SIGALG_gostr34102001_gostr3411_name},
+    {TLSEXT_SIGALG_ecdsa_brainpoolP256r1_sha256, TLSEXT_SIGALG_ecdsa_brainpoolP256r1_sha256_name},
+    {TLSEXT_SIGALG_ecdsa_brainpoolP384r1_sha384, TLSEXT_SIGALG_ecdsa_brainpoolP384r1_sha384_name},
+    {TLSEXT_SIGALG_ecdsa_brainpoolP512r1_sha512, TLSEXT_SIGALG_ecdsa_brainpoolP512r1_sha512_name}
 };
 
 static const ssl_trace_tbl ssl_ctype_tbl[] = {
@@ -1268,13 +1272,14 @@ static int ssl_print_server_keyex(BIO *bio, int indent, const SSL_CONNECTION *sc
     return !msglen;
 }
 
-static int ssl_print_certificate(BIO *bio, int indent,
+static int ssl_print_certificate(BIO *bio, const SSL_CONNECTION *sc, int indent,
                                  const unsigned char **pmsg, size_t *pmsglen)
 {
     size_t msglen = *pmsglen;
     size_t clen;
     X509 *x;
     const unsigned char *p = *pmsg, *q;
+    SSL_CTX *ctx = SSL_CONNECTION_GET_CTX(sc);
 
     if (msglen < 3)
         return 0;
@@ -1284,8 +1289,12 @@ static int ssl_print_certificate(BIO *bio, int indent,
     q = p + 3;
     BIO_indent(bio, indent, 80);
     BIO_printf(bio, "ASN.1Cert, length=%d", (int)clen);
-    x = d2i_X509(NULL, &q, clen);
-    if (!x)
+    x = X509_new_ex(ctx->libctx, ctx->propq);
+    if (x != NULL && d2i_X509(&x, &q, clen) == NULL) {
+        X509_free(x);
+        x = NULL;
+    }
+    if (x ==  NULL)
         BIO_puts(bio, "<UNPARSEABLE CERTIFICATE>\n");
     else {
         BIO_puts(bio, "\n------details-----\n");
@@ -1362,7 +1371,7 @@ static int ssl_print_certificates(BIO *bio, const SSL_CONNECTION *sc, int server
     BIO_indent(bio, indent, 80);
     BIO_printf(bio, "certificate_list, length=%d\n", (int)clen);
     while (clen > 0) {
-        if (!ssl_print_certificate(bio, indent + 2, &msg, &clen))
+        if (!ssl_print_certificate(bio, sc, indent + 2, &msg, &clen))
             return 0;
         if (SSL_CONNECTION_IS_TLS13(sc)
             && !ssl_print_extensions(bio, indent + 2, server,
@@ -1662,6 +1671,7 @@ static int ssl_print_handshake(BIO *bio, const SSL_CONNECTION *sc, int server,
         ssl_print_hex(bio, indent + 2, "verify_data", msg, msglen);
         break;
 
+    case SSL3_MT_END_OF_EARLY_DATA:
     case SSL3_MT_SERVER_DONE:
         if (msglen != 0)
             ssl_print_hex(bio, indent + 2, "unexpected value", msg, msglen);
@@ -1702,6 +1712,19 @@ void SSL_trace(int write_p, int version, int content_type,
     const unsigned char *msg = buf;
     BIO *bio = arg;
     SSL_CONNECTION *sc = SSL_CONNECTION_FROM_SSL(ssl);
+#ifndef OPENSSL_NO_QUIC
+    QUIC_CONNECTION *qc = QUIC_CONNECTION_FROM_SSL(ssl);
+
+    if (qc != NULL) {
+        if (ossl_quic_trace(write_p, version, content_type, buf, msglen, ssl,
+                            arg))
+            return;
+        /*
+         * Otherwise ossl_quic_trace didn't handle this content_type so we
+         * fallback to standard TLS handling
+         */
+    }
+#endif
 
     if (sc == NULL)
         return;
@@ -1720,7 +1743,7 @@ void SSL_trace(int write_p, int version, int content_type,
             }
             hvers = msg[1] << 8 | msg[2];
             BIO_puts(bio, write_p ? "Sent" : "Received");
-            BIO_printf(bio, " Record\nHeader:\n  Version = %s (0x%x)\n",
+            BIO_printf(bio, " TLS Record\nHeader:\n  Version = %s (0x%x)\n",
                        ssl_trace_str(hvers, ssl_version_tbl), hvers);
             if (SSL_CONNECTION_IS_DTLS(sc)) {
                 BIO_printf(bio,

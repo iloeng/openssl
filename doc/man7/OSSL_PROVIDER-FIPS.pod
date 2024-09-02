@@ -72,6 +72,8 @@ The OpenSSL FIPS provider supports these operations and algorithms:
 
 =item KECCAK-KMAC, see L<EVP_MD-KECCAK-KMAC(7)>
 
+=item SHAKE, see L<EVP_MD-SHAKE(7)>
+
 =back
 
 =head2 Symmetric Ciphers
@@ -79,6 +81,10 @@ The OpenSSL FIPS provider supports these operations and algorithms:
 =over 4
 
 =item AES, see L<EVP_CIPHER-AES(7)>
+
+=item 3DES, see L<EVP_CIPHER-DES(7)>
+
+This is an unapproved algorithm.
 
 =back
 
@@ -134,6 +140,10 @@ The OpenSSL FIPS provider supports these operations and algorithms:
 
 =item X448, see L<EVP_KEYEXCH-X448(7)>
 
+=item TLS1-PRF
+
+=item HKDF
+
 =back
 
 =head2 Asymmetric Signature
@@ -142,9 +152,17 @@ The OpenSSL FIPS provider supports these operations and algorithms:
 
 =item RSA, see L<EVP_SIGNATURE-RSA(7)>
 
-=item X25519, see L<EVP_SIGNATURE-ED25519(7)>
+The B<X931> padding mode "OSSL_PKEY_RSA_PAD_MODE_X931" is no longer supported
+for signature generation, but may be used for verification for legacy use cases.
+(This is a FIPS 140-3 requirement)
 
-=item X448, see L<EVP_SIGNATURE-ED448(7)>
+=item DSA, see L<EVP_SIGNATURE-DSA(7)>
+
+=item ED25519, see L<EVP_SIGNATURE-ED25519(7)>
+
+=item ED448, see L<EVP_SIGNATURE-ED448(7)>
+
+=item ECDSA, see L<EVP_SIGNATURE-ECDSA(7)>
 
 =item HMAC, see L<EVP_SIGNATURE-HMAC(7)>
 
@@ -180,11 +198,33 @@ The OpenSSL FIPS provider supports these operations and algorithms:
 
 =item RSA, see L<EVP_KEYMGMT-RSA(7)>
 
+=item RSA-PSS
+
 =item EC, see L<EVP_KEYMGMT-EC(7)>
 
 =item X25519, see L<EVP_KEYMGMT-X25519(7)>
 
+This is an unapproved algorithm.
+
 =item X448, see L<EVP_KEYMGMT-X448(7)>
+
+This is an unapproved algorithm.
+
+=item ED25519, see L<EVP_KEYMGMT-ED25519(7)>
+
+This is an unapproved algorithm.
+
+=item ED448, see L<EVP_KEYMGMT-ED448(7)>
+
+This is an unapproved algorithm.
+
+=item TLS1-PRF
+
+=item HKDF
+
+=item HMAC, see L<EVP_KEYMGMT-HMAC(7)>
+
+=item CMAC, see L<EVP_KEYMGMT-CMAC(7)>
 
 =back
 
@@ -299,7 +339,11 @@ The FIPS module passes the following descriptions(s) to OSSL_SELF_TEST_onbegin()
 
 =item "RSA" (B<OSSL_SELF_TEST_DESC_PCT_RSA_PKCS1>)
 
+=item "RSA" (B<OSSL_SELF_TEST_DESC_PCT_RSA>)
+
 =item "ECDSA" (B<OSSL_SELF_TEST_DESC_PCT_ECDSA>)
+
+=item "EDDSA" (B<OSSL_SELF_TEST_DESC_PCT_EDDSA>)
 
 =item "DSA" (B<OSSL_SELF_TEST_DESC_PCT_DSA>)
 
@@ -332,6 +376,8 @@ Digest tests used with the "KAT_Digest" type.
 =item "RSA" (B<OSSL_SELF_TEST_DESC_SIGN_RSA>)
 
 =item "ECDSA" (B<OSSL_SELF_TEST_DESC_SIGN_ECDSA>)
+
+=item "EDDSA" (B<OSSL_SELF_TEST_DESC_SIGN_EDDSA>)
 
 Signature tests used with the "KAT_Signature" type.
 
@@ -371,7 +417,7 @@ Key Derivation Function tests used with the "KAT_KDF" type.
 
 DRBG tests used with the "DRBG" type.
 
-= item "RNG" (B<OSSL_SELF_TEST_DESC_RNG>)
+=item "RNG" (B<OSSL_SELF_TEST_DESC_RNG>)
 
 "Continuous_RNG_Test" uses this.
 
@@ -426,6 +472,17 @@ A simple self test callback is shown below for illustrative purposes.
 
 =head1 NOTES
 
+Some released versions of OpenSSL do not include a validated
+FIPS provider.  To determine which versions have undergone
+the validation process, please refer to the
+L<OpenSSL Downloads page|https://www.openssl.org/source/>.  If you
+require FIPS-approved functionality, it is essential to build your FIPS
+provider using one of the validated versions listed there.  Normally,
+it is possible to utilize a FIPS provider constructed from one of the
+validated versions alongside F<libcrypto> and F<libssl> compiled from any
+release within the same major release series.  This flexibility enables
+you to address bug fixes and CVEs that fall outside the FIPS boundary.
+
 The FIPS provider in OpenSSL 3.1 includes some non-FIPS validated algorithms,
 consequently the property query C<fips=yes> is mandatory for applications that
 want to operate in a FIPS approved manner.  The algorithms are:
@@ -449,19 +506,16 @@ L<OSSL_SELF_TEST_new(3)>,
 L<OSSL_PARAM(3)>,
 L<openssl-core.h(7)>,
 L<openssl-core_dispatch.h(7)>,
-L<provider(7)>
+L<provider(7)>,
+L<https://www.openssl.org/source/>
 
 =head1 HISTORY
 
 This functionality was added in OpenSSL 3.0.
 
-OpenSSL 3.0 includes a FIPS 140-2 approved FIPS provider.
-
-OpenSSL 3.1 includes a FIPS 140-3 approved FIPS provider.
-
 =head1 COPYRIGHT
 
-Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

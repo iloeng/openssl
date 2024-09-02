@@ -1,5 +1,5 @@
 /*
-* Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+* Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
 *
 * Licensed under the Apache License 2.0 (the "License").  You may not use
 * this file except in compliance with the License.  You can obtain a copy
@@ -14,6 +14,7 @@
 #include "internal/e_os.h"
 #include "internal/time.h"
 #include "internal/quic_types.h"
+#include "internal/quic_predef.h"
 #include "internal/quic_wire.h"
 #include "internal/quic_record_tx.h"
 #include "internal/quic_record_rx.h"
@@ -51,7 +52,6 @@
  * datagrams. The terms 'send' and 'receive' are used when referring to the
  * stream abstraction. Applications send; we transmit.
  */
-typedef struct quic_sstream_st QUIC_SSTREAM;
 
 /*
  * Instantiates a new QUIC_SSTREAM. init_buf_size specifies the initial size of
@@ -254,6 +254,12 @@ void ossl_quic_sstream_fin(QUIC_SSTREAM *qss);
 int ossl_quic_sstream_get_final_size(QUIC_SSTREAM *qss, uint64_t *final_size);
 
 /*
+ * Returns 1 iff all bytes (and any FIN, if any) which have been appended to the
+ * QUIC_SSTREAM so far, and any FIN (if any), have been both sent and acked.
+ */
+int ossl_quic_sstream_is_totally_acked(QUIC_SSTREAM *qss);
+
+/*
  * Resizes the internal ring buffer. All stream data is preserved safely.
  *
  * This can be used to expand or contract the ring buffer, but not to contract
@@ -290,6 +296,11 @@ void ossl_quic_sstream_adjust_iov(size_t len,
                                   size_t num_iov);
 
 /*
+ * Sets flag to cleanse the buffered data when it is acked.
+ */
+void ossl_quic_sstream_set_cleanse(QUIC_SSTREAM *qss, int cleanse);
+
+/*
  * QUIC Receive Stream Manager
  * ===========================
  *
@@ -301,7 +312,6 @@ void ossl_quic_sstream_adjust_iov(size_t len,
  * (i.e., for a unidirectional receiving stream or for the receiving component
  * of a bidirectional stream).
  */
-typedef struct quic_rstream_st QUIC_RSTREAM;
 
 /*
  * Create a new instance of QUIC_RSTREAM with pointers to the flow
@@ -408,6 +418,11 @@ int ossl_quic_rstream_move_to_rbuf(QUIC_RSTREAM *qrs);
  * than currently occupied.
  */
 int ossl_quic_rstream_resize_rbuf(QUIC_RSTREAM *qrs, size_t rbuf_size);
+
+/*
+ * Sets flag to cleanse the buffered data when user reads it.
+ */
+void ossl_quic_rstream_set_cleanse(QUIC_RSTREAM *qrs, int cleanse);
 # endif
 
 #endif

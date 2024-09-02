@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -82,8 +82,9 @@ int BN_get_params(int which)
 const BIGNUM *BN_value_one(void)
 {
     static const BN_ULONG data_one = 1L;
-    static const BIGNUM const_one =
-        { (BN_ULONG *)&data_one, 1, 1, 0, BN_FLG_STATIC_DATA };
+    static const BIGNUM const_one = {
+        (BN_ULONG *)&data_one, 1, 1, 0, BN_FLG_STATIC_DATA
+    };
 
     return &const_one;
 }
@@ -426,11 +427,11 @@ int BN_set_word(BIGNUM *a, BN_ULONG w)
     return 1;
 }
 
-typedef enum {BIG, LITTLE} endianess_t;
+typedef enum {BIG, LITTLE} endianness_t;
 typedef enum {SIGNED, UNSIGNED} signedness_t;
 
 static BIGNUM *bin2bn(const unsigned char *s, int len, BIGNUM *ret,
-                      endianess_t endianess, signedness_t signedness)
+                      endianness_t endianness, signedness_t signedness)
 {
     int inc;
     const unsigned char *s2;
@@ -464,7 +465,7 @@ static BIGNUM *bin2bn(const unsigned char *s, int len, BIGNUM *ret,
      * significant BIGNUM chunk, so we adapt parameters to transfer
      * input bytes accordingly.
      */
-    if (endianess == LITTLE) {
+    if (endianness == LITTLE) {
         s2 = s + len - 1;
         inc2 = -1;
         inc = 1;
@@ -504,7 +505,7 @@ static BIGNUM *bin2bn(const unsigned char *s, int len, BIGNUM *ret,
         return ret;
     }
     n = ((len - 1) / BN_BYTES) + 1; /* Number of resulting bignum chunks */
-    if (!ossl_assert(bn_wexpand(ret, (int)n) != NULL)) {
+    if (bn_wexpand(ret, (int)n) == NULL) {
         BN_free(bn);
         return NULL;
     }
@@ -542,7 +543,7 @@ BIGNUM *BN_signed_bin2bn(const unsigned char *s, int len, BIGNUM *ret)
 }
 
 static int bn2binpad(const BIGNUM *a, unsigned char *to, int tolen,
-                     endianess_t endianess, signedness_t signedness)
+                     endianness_t endianness, signedness_t signedness)
 {
     int inc;
     int n, n8;
@@ -599,7 +600,7 @@ static int bn2binpad(const BIGNUM *a, unsigned char *to, int tolen,
      * to most significant BIGNUM limb, so we adapt parameters to
      * transfer output bytes accordingly.
      */
-    if (endianess == LITTLE) {
+    if (endianness == LITTLE) {
         inc = 1;
     } else {
         inc = -1;
@@ -708,14 +709,29 @@ int BN_ucmp(const BIGNUM *a, const BIGNUM *b)
     int i;
     BN_ULONG t1, t2, *ap, *bp;
 
+    ap = a->d;
+    bp = b->d;
+
+    if (BN_get_flags(a, BN_FLG_CONSTTIME)
+            && a->top == b->top) {
+        int res = 0;
+
+        for (i = 0; i < b->top; i++) {
+            res = constant_time_select_int(constant_time_lt_bn(ap[i], bp[i]),
+                                           -1, res);
+            res = constant_time_select_int(constant_time_lt_bn(bp[i], ap[i]),
+                                           1, res);
+        }
+        return res;
+    }
+
     bn_check_top(a);
     bn_check_top(b);
 
     i = a->top - b->top;
     if (i != 0)
         return i;
-    ap = a->d;
-    bp = b->d;
+
     for (i = a->top - 1; i >= 0; i--) {
         t1 = ap[i];
         t2 = bp[i];
@@ -827,11 +843,10 @@ int BN_is_bit_set(const BIGNUM *a, int n)
     return (int)(((a->d[i]) >> j) & ((BN_ULONG)1));
 }
 
-int BN_mask_bits(BIGNUM *a, int n)
+int ossl_bn_mask_bits_fixed_top(BIGNUM *a, int n)
 {
     int b, w;
 
-    bn_check_top(a);
     if (n < 0)
         return 0;
 
@@ -845,8 +860,19 @@ int BN_mask_bits(BIGNUM *a, int n)
         a->top = w + 1;
         a->d[w] &= ~(BN_MASK2 << b);
     }
-    bn_correct_top(a);
+    a->flags |= BN_FLG_FIXED_TOP;
     return 1;
+}
+
+int BN_mask_bits(BIGNUM *a, int n)
+{
+    int ret;
+
+    bn_check_top(a);
+    ret = ossl_bn_mask_bits_fixed_top(a, n);
+    if (ret)
+        bn_correct_top(a);
+    return ret;
 }
 
 void BN_set_negative(BIGNUM *a, int b)
@@ -1022,6 +1048,22 @@ int BN_is_word(const BIGNUM *a, const BN_ULONG w)
     return BN_abs_is_word(a, w) && (!w || !a->neg);
 }
 
+int ossl_bn_is_word_fixed_top(const BIGNUM *a, const BN_ULONG w)
+{
+    int res, i;
+    const BN_ULONG *ap = a->d;
+
+    if (a->neg || a->top == 0)
+        return 0;
+
+    res = constant_time_select_int(constant_time_eq_bn(ap[0], w), 1, 0);
+
+    for (i = 1; i < a->top; i++)
+        res = constant_time_select_int(constant_time_is_zero_bn(ap[i]),
+                                       res, 0);
+    return res;
+}
+
 int BN_is_odd(const BIGNUM *a)
 {
     return (a->top > 0) && (a->d[0] & 1);
@@ -1104,6 +1146,28 @@ void *BN_GENCB_get_arg(BN_GENCB *cb)
 BIGNUM *bn_wexpand(BIGNUM *a, int words)
 {
     return (words <= a->dmax) ? a : bn_expand2(a, words);
+}
+
+void bn_correct_top_consttime(BIGNUM *a)
+{
+    int j, atop;
+    BN_ULONG limb;
+    unsigned int mask;
+
+    for (j = 0, atop = 0; j < a->dmax; j++) {
+        limb = a->d[j];
+        limb |= 0 - limb;
+        limb >>= BN_BITS2 - 1;
+        limb = 0 - limb;
+        mask = (unsigned int)limb;
+        mask &= constant_time_msb(j - a->top);
+        atop = constant_time_select_int(mask, j + 1, atop);
+    }
+
+    mask = constant_time_eq_int(atop, 0);
+    a->top = atop;
+    a->neg = constant_time_select_int(mask, 0, a->neg);
+    a->flags &= ~BN_FLG_FIXED_TOP;
 }
 
 void bn_correct_top(BIGNUM *a)

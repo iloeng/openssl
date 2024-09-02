@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -23,6 +23,7 @@
 #include <openssl/rsa.h>
 #include <openssl/dh.h>
 #include <openssl/core_names.h>
+#include <openssl/ui.h>
 
 #include "testutil.h"
 #include "internal/nelem.h"
@@ -230,12 +231,14 @@ static const unsigned char kExampleECKey2DER[] = {
     0x96, 0x69, 0xE0, 0x04, 0xCB, 0x89, 0x0B, 0x42
 };
 
+# ifndef OPENSSL_NO_ECX
 static const unsigned char kExampleECXKey2DER[] = {
     0x30, 0x2E, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e,
     0x04, 0x22, 0x04, 0x20, 0xc8, 0xa9, 0xd5, 0xa9, 0x10, 0x91, 0xad, 0x85,
     0x1c, 0x66, 0x8b, 0x07, 0x36, 0xc1, 0xc9, 0xa0, 0x29, 0x36, 0xc0, 0xd3,
     0xad, 0x62, 0x67, 0x08, 0x58, 0x08, 0x80, 0x47, 0xba, 0x05, 0x74, 0x75
 };
+# endif
 #endif
 
 typedef struct APK_DATA_st {
@@ -248,7 +251,9 @@ static APK_DATA keydata[] = {
     {kExampleRSAKeyDER, sizeof(kExampleRSAKeyDER), EVP_PKEY_RSA},
     {kExampleRSAKeyPKCS8, sizeof(kExampleRSAKeyPKCS8), EVP_PKEY_RSA},
 #ifndef OPENSSL_NO_EC
+# ifndef OPENSSL_NO_ECX
     {kExampleECXKey2DER, sizeof(kExampleECXKey2DER), EVP_PKEY_X25519},
+# endif
     {kExampleECKeyDER, sizeof(kExampleECKeyDER), EVP_PKEY_EC},
     {kExampleECKey2DER, sizeof(kExampleECKey2DER), EVP_PKEY_EC},
 #endif
@@ -388,6 +393,61 @@ static int test_dh_paramgen(void)
     return ret;
 }
 
+static int set_fromdata_string(EVP_PKEY_CTX *ctx, const char *name, char *value)
+{
+    int ret;
+    OSSL_PARAM params[2];
+    EVP_PKEY *pkey = NULL;
+
+    if (EVP_PKEY_fromdata_init(ctx) != 1)
+        return -1;
+    params[0] = OSSL_PARAM_construct_utf8_string(name, value, 0);
+    params[1] = OSSL_PARAM_construct_end();
+    ret = EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEY_PARAMETERS, params);
+    EVP_PKEY_free(pkey);
+    return ret;
+}
+
+static int set_fromdata_uint(EVP_PKEY_CTX *ctx, const char *name)
+{
+    int ret;
+    unsigned int tmp = 0;
+    OSSL_PARAM params[2];
+    EVP_PKEY *pkey = NULL;
+
+    if (EVP_PKEY_fromdata_init(ctx) != 1)
+        return -1;
+    params[0] = OSSL_PARAM_construct_uint(name, &tmp);
+    params[1] = OSSL_PARAM_construct_end();
+    ret = EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEY_PARAMETERS, params);
+    EVP_PKEY_free(pkey);
+    return ret;
+}
+
+static int test_dh_paramfromdata(void)
+{
+    EVP_PKEY_CTX *ctx = NULL;
+    int ret = 0;
+
+    /* Test failure paths for FFC - mainly due to setting the wrong param type */
+    ret = TEST_ptr(ctx = EVP_PKEY_CTX_new_from_name(mainctx, "DH", NULL))
+          && TEST_int_eq(set_fromdata_uint(ctx, OSSL_PKEY_PARAM_GROUP_NAME), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_GROUP_NAME, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_P, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_GINDEX, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_PCOUNTER, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_COFACTOR, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_H, "bad"), 0)
+          && TEST_int_eq(set_fromdata_uint(ctx, OSSL_PKEY_PARAM_FFC_SEED), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_VALIDATE_PQ, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_VALIDATE_G, "bad"), 0)
+          && TEST_int_eq(set_fromdata_string(ctx, OSSL_PKEY_PARAM_FFC_VALIDATE_LEGACY, "bad"), 0)
+          && TEST_int_eq(set_fromdata_uint(ctx, OSSL_PKEY_PARAM_FFC_DIGEST), 0);
+
+    EVP_PKEY_CTX_free(ctx);
+    return ret;
+}
+
 #endif
 
 #ifndef OPENSSL_NO_EC
@@ -431,6 +491,7 @@ static int test_ec_tofrom_data_select(void)
     return ret;
 }
 
+# ifndef OPENSSL_NO_ECX
 static int test_ecx_tofrom_data_select(void)
 {
     int ret;
@@ -441,6 +502,7 @@ static int test_ecx_tofrom_data_select(void)
     EVP_PKEY_free(key);
     return ret;
 }
+# endif
 #endif
 
 #ifndef OPENSSL_NO_SM2
@@ -694,6 +756,52 @@ static int test_PEM_read_bio_negative(int testid)
     EVP_PKEY_free(pkey);
     BIO_free(key_bio);
     OSSL_PROVIDER_unload(provider);
+
+    return ok;
+}
+
+static int test_PEM_read_bio_negative_wrong_password(int testid)
+{
+    int ok = 0;
+    OSSL_PROVIDER *provider = OSSL_PROVIDER_load(NULL, "default");
+    EVP_PKEY *read_pkey = NULL;
+    EVP_PKEY *write_pkey = EVP_RSA_gen(1024);
+    BIO *key_bio = BIO_new(BIO_s_mem());
+    const UI_METHOD *undo_ui_method = NULL;
+    const UI_METHOD *ui_method = NULL;
+    if (testid > 0)
+        ui_method = UI_null();
+
+    if (!TEST_ptr(provider))
+        goto err;
+    if (!TEST_ptr(key_bio))
+        goto err;
+    if (!TEST_ptr(write_pkey))
+        goto err;
+    undo_ui_method = UI_get_default_method();
+    UI_set_default_method(ui_method);
+
+    if (/* Output Encrypted private key in PEM form */
+        !TEST_true(PEM_write_bio_PrivateKey(key_bio, write_pkey, EVP_aes_256_cbc(),
+                                           NULL, 0, NULL, "pass")))
+        goto err;
+
+    ERR_clear_error();
+    read_pkey = PEM_read_bio_PrivateKey(key_bio, NULL, NULL, NULL);
+    if (!TEST_ptr_null(read_pkey))
+        goto err;
+
+    if (!TEST_int_eq(ERR_GET_REASON(ERR_get_error()), PEM_R_PROBLEMS_GETTING_PASSWORD))
+        goto err;
+    ok = 1;
+
+ err:
+    test_openssl_errors();
+    EVP_PKEY_free(read_pkey);
+    EVP_PKEY_free(write_pkey);
+    BIO_free(key_bio);
+    OSSL_PROVIDER_unload(provider);
+    UI_set_default_method(undo_ui_method);
 
     return ok;
 }
@@ -1218,6 +1326,24 @@ err:
 }
 #endif
 
+/*
+ * Currently, EVP_<OBJ>_fetch doesn't support
+ * colon separated alternative names for lookup
+ * so add a test here to ensure that when one is provided
+ * libcrypto returns an error
+ */
+static int evp_test_name_parsing(void)
+{
+    EVP_MD *md;
+
+    if (!TEST_ptr_null(md = EVP_MD_fetch(mainctx, "SHA256:BogusName", NULL))) {
+        EVP_MD_free(md);
+        return 0;
+    }
+
+    return 1;
+}
+
 int setup_tests(void)
 {
     if (!test_get_libctx(&mainctx, &nullprov, NULL, NULL, NULL)) {
@@ -1226,12 +1352,15 @@ int setup_tests(void)
         return 0;
     }
 
+    ADD_TEST(evp_test_name_parsing);
     ADD_TEST(test_alternative_default);
     ADD_ALL_TESTS(test_d2i_AutoPrivateKey_ex, OSSL_NELEM(keydata));
 #ifndef OPENSSL_NO_EC
     ADD_ALL_TESTS(test_d2i_PrivateKey_ex, 2);
     ADD_TEST(test_ec_tofrom_data_select);
+# ifndef OPENSSL_NO_ECX
     ADD_TEST(test_ecx_tofrom_data_select);
+# endif
     ADD_TEST(test_ec_d2i_i2d_pubkey);
 #else
     ADD_ALL_TESTS(test_d2i_PrivateKey_ex, 1);
@@ -1247,6 +1376,7 @@ int setup_tests(void)
 #ifndef OPENSSL_NO_DH
     ADD_TEST(test_dh_tofrom_data_select);
     ADD_TEST(test_dh_paramgen);
+    ADD_TEST(test_dh_paramfromdata);
 #endif
     ADD_TEST(test_rsa_tofrom_data_select);
 
@@ -1257,6 +1387,7 @@ int setup_tests(void)
     ADD_TEST(test_pkcs8key_nid_bio);
 #endif
     ADD_ALL_TESTS(test_PEM_read_bio_negative, OSSL_NELEM(keydata));
+    ADD_ALL_TESTS(test_PEM_read_bio_negative_wrong_password, 2);
     ADD_TEST(test_rsa_pss_sign);
     ADD_TEST(test_evp_md_ctx_dup);
     ADD_TEST(test_evp_md_ctx_copy);

@@ -20,6 +20,7 @@ B<openssl> B<s_client>
 [B<-unix> I<path>]
 [B<-4>]
 [B<-6>]
+[B<-quic>]
 [B<-servername> I<name>]
 [B<-noservername>]
 [B<-verify> I<depth>]
@@ -52,6 +53,7 @@ B<openssl> B<s_client>
 [B<-debug>]
 [B<-trace>]
 [B<-nocommands>]
+[B<-adv>]
 [B<-security_debug>]
 [B<-security_debug_verbose>]
 [B<-msg>]
@@ -91,6 +93,7 @@ B<openssl> B<s_client>
 [B<-legacy_server_connect>]
 [B<-no_legacy_server_connect>]
 [B<-allow_no_dhe_kex>]
+[B<-prefer_no_dhe_kex>]
 [B<-sigalgs> I<sigalglist>]
 [B<-curves> I<curvelist>]
 [B<-cipher> I<cipherlist>]
@@ -212,6 +215,11 @@ Use IPv4 only.
 =item B<-6>
 
 Use IPv6 only.
+
+=item B<-quic>
+
+Connect using the QUIC protocol. If specified then the B<-alpn> option must also
+be provided.
 
 =item B<-servername> I<name>
 
@@ -442,6 +450,10 @@ Print extensive debugging information including a hex dump of all traffic.
 
 Do not use interactive command letters.
 
+=item B<-adv>
+
+Use advanced command mode.
+
 =item B<-security_debug>
 
 Enable security debug messages.
@@ -618,7 +630,11 @@ Disables support for receiving TLSv1.3 compressed certificate.
 Enables support for SSL/TLS compression.
 This option was introduced in OpenSSL 1.1.0.
 TLS compression is not recommended and is off by default as of
-OpenSSL 1.1.0.
+OpenSSL 1.1.0. TLS compression can only be used in security level 1 or
+lower. From OpenSSL 3.2.0 and above the default security level is 2, so this
+option will have no effect without also changing the security level. Use the
+B<-cipher> option to change the security level. See L<openssl-ciphers(1)> for
+more information.
 
 =item B<-no_comp>
 
@@ -640,7 +656,11 @@ For example strings, see L<SSL_CTX_set1_sigalgs(3)>
 =item B<-curves> I<curvelist>
 
 Specifies the list of supported curves to be sent by the client. The curve is
-ultimately selected by the server. For a list of all curves, use:
+ultimately selected by the server.
+
+The list of all supported groups includes named EC parameters as well as X25519
+and X448 or FFDHE groups, and may also include groups implemented in 3rd-party
+providers. For a list of named EC parameters, use:
 
     $ openssl ecparam -list_curves
 
@@ -852,15 +872,18 @@ I<localhost> on port I<4433>.
 
 =back
 
-=head1 CONNECTED COMMANDS
+=head1 CONNECTED COMMANDS (BASIC)
 
-If a connection is established with an SSL server then any data received
+If a connection is established with an SSL/TLS server then any data received
 from the server is displayed and any key presses will be sent to the
-server. If end of file is reached then the connection will be closed down. When
-used interactively (which means neither B<-quiet> nor B<-ign_eof> have been
-given), then certain commands are also recognized which perform special
-operations. These commands are a letter which must appear at the start of a
-line. They are listed below.
+server. If end of file is reached then the connection will be closed down.
+
+When used interactively (which means neither B<-quiet> nor B<-ign_eof> have been
+given), and neither of B<-adv> or B<-nocommands> are given then "Basic" command
+mode is entered. In this mode certain commands are recognized which perform
+special operations. These commands are a letter which must appear at the start
+of a line. All further data after the initial letter on the line is ignored.
+The commands are listed below.
 
 =over 4
 
@@ -872,6 +895,10 @@ End the current SSL connection and exit.
 
 Renegotiate the SSL session (TLSv1.2 and below only).
 
+=item B<C>
+
+Attempt to reconnect to the server using a resumption handshake.
+
 =item B<k>
 
 Send a key update message to the server (TLSv1.3 only)
@@ -879,6 +906,59 @@ Send a key update message to the server (TLSv1.3 only)
 =item B<K>
 
 Send a key update message to the server and request one back (TLSv1.3 only)
+
+=back
+
+=head1 CONNECTED COMMANDS (ADVANCED)
+
+If B<-adv> has been given then "advanced" command mode is entered. As with basic
+mode, if a connection is established with an SSL/TLS server then any data
+received from the server is displayed and any key presses will be sent to the
+server. If end of file is reached then the connection will be closed down.
+
+Special commands can be supplied by enclosing them in braces, e.g. "{help}" or
+"{quit}". These commands can appear anywhere in the text entered into s_client,
+but they are not sent to the server. Some commands can take an argument by
+ending the command name with ":" and then providing the argument, e.g.
+"{keyup:req}". Some commands are only available when certain protocol versions
+have been negotiated.
+
+If a newline appears at the end of a line entered into s_client then this is
+also sent to the server. If a command appears on a line on its own with no other
+text on the same line, then the newline is suppressed and not sent to the
+server.
+
+The following commands are recognised.
+
+=over 4
+
+=item B<help>
+
+Prints out summary help text about the available commands.
+
+=item B<quit>
+
+Close the connection to the peer
+
+=item B<reconnect>
+
+Reconnect to the peer and attempt a resumption handshake
+
+=item B<keyup>
+
+Send a Key Update message. TLSv1.3 only. This command takes an optional
+argument. If the argument "req" is supplied then the peer is also requested to
+update its keys. Otherwise if "noreq" is supplied the peer is not requested
+to update its keys. The default is "req".
+
+=item B<reneg>
+
+Initiate a renegotiation with the server. (D)TLSv1.2 or below only.
+
+=item B<fin>
+
+Indicate FIN on the current stream. QUIC only. Once FIN has been sent any
+further text entered for this stream is ignored.
 
 =back
 

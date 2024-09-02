@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -18,9 +18,28 @@
 # include "internal/e_os.h" /* ossl_inline in many files */
 # include "internal/nelem.h"
 
-#ifdef NDEBUG
-# define ossl_assert(x) ((x) != 0)
-#else
+# if defined(__GNUC__) || defined(__clang__)
+#  define ossl_likely(x)     __builtin_expect(!!(x), 1)
+#  define ossl_unlikely(x)   __builtin_expect(!!(x), 0)
+# else
+#  define ossl_likely(x)     x
+#  define ossl_unlikely(x)   x
+# endif
+
+# if defined(__GNUC__) || defined(__clang__)
+#  define ALIGN32       __attribute((aligned(32)))
+#  define ALIGN64       __attribute((aligned(64)))
+# elif defined(_MSC_VER)
+#  define ALIGN32       __declspec(align(32))
+#  define ALIGN64       __declspec(align(64))
+# else
+#  define ALIGN32
+#  define ALIGN64
+# endif
+
+# ifdef NDEBUG
+#  define ossl_assert(x) ossl_likely((x) != 0)
+# else
 __owur static ossl_inline int ossl_assert_int(int expr, const char *exprstr,
                                               const char *file, int line)
 {
@@ -30,10 +49,10 @@ __owur static ossl_inline int ossl_assert_int(int expr, const char *exprstr,
     return expr;
 }
 
-# define ossl_assert(x) ossl_assert_int((x) != 0, "Assertion failed: "#x, \
+#  define ossl_assert(x) ossl_assert_int((x) != 0, "Assertion failed: "#x, \
                                          __FILE__, __LINE__)
 
-#endif
+# endif
 
 /* Check if |pre|, which must be a string literal, is a prefix of |str| */
 #define HAS_PREFIX(str, pre) (strncmp(str, pre "", sizeof(pre) - 1) == 0)
@@ -75,14 +94,6 @@ __owur static ossl_inline int ossl_assert_int(int expr, const char *exprstr,
 #  define CTLOG_FILE              "OSSL$DATAROOT:[000000]ct_log_list.cnf"
 # endif
 
-#ifndef OPENSSL_NO_WINSTORE
-# define X509_CERT_URI            "org.openssl.winstore://"
-#else
-# define X509_CERT_URI            ""
-#endif
-
-# define X509_CERT_URI_EVP        "SSL_CERT_URI"
-# define X509_CERT_PATH_EVP       "SSL_CERT_PATH"
 # define X509_CERT_DIR_EVP        "SSL_CERT_DIR"
 # define X509_CERT_FILE_EVP       "SSL_CERT_FILE"
 # define CTLOG_FILE_EVP           "CTLOG_FILE"
@@ -131,15 +142,7 @@ __owur static ossl_inline int ossl_assert_int(int expr, const char *exprstr,
                          l|=((uint64_t)(*((c)++)))<< 8, \
                          l|=((uint64_t)(*((c)++))))
 
-
 # define l2n(l,c)        (*((c)++)=(unsigned char)(((l)>>24)&0xff), \
-                         *((c)++)=(unsigned char)(((l)>>16)&0xff), \
-                         *((c)++)=(unsigned char)(((l)>> 8)&0xff), \
-                         *((c)++)=(unsigned char)(((l)    )&0xff))
-
-# define l2n6(l,c)       (*((c)++)=(unsigned char)(((l)>>40)&0xff), \
-                         *((c)++)=(unsigned char)(((l)>>32)&0xff), \
-                         *((c)++)=(unsigned char)(((l)>>24)&0xff), \
                          *((c)++)=(unsigned char)(((l)>>16)&0xff), \
                          *((c)++)=(unsigned char)(((l)>> 8)&0xff), \
                          *((c)++)=(unsigned char)(((l)    )&0xff))
@@ -195,6 +198,20 @@ static ossl_inline int ossl_ends_with_dirsep(const char *path)
     return *path == '/';
 }
 
+static ossl_inline char ossl_determine_dirsep(const char *path)
+{
+    if (ossl_ends_with_dirsep(path))
+        return '\0';
+
+# if defined(_WIN32)
+    return '\\';
+# elif defined(__VMS)
+    return ':';
+# else
+    return '/';
+# endif
+}
+
 static ossl_inline int ossl_is_absolute_path(const char *path)
 {
 # if defined __VMS
@@ -210,5 +227,10 @@ static ossl_inline int ossl_is_absolute_path(const char *path)
 # endif
     return path[0] == '/';
 }
+
+const char *ossl_get_openssldir(void);
+const char *ossl_get_enginesdir(void);
+const char *ossl_get_modulesdir(void);
+const char *ossl_get_wininstallcontext(void);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -116,6 +116,24 @@ ossl_quic_pkt_type_must_be_last(uint32_t pkt_type)
      */
     return !ossl_quic_pkt_type_can_share_dgram(pkt_type)
         || pkt_type == QUIC_PKT_TYPE_1RTT;
+}
+
+/*
+ * Determine if the packet type has a version field.
+ */
+static ossl_inline ossl_unused int
+ossl_quic_pkt_type_has_version(uint32_t pkt_type)
+{
+    return pkt_type != QUIC_PKT_TYPE_1RTT && pkt_type != QUIC_PKT_TYPE_VERSION_NEG;
+}
+
+/*
+ * Determine if the packet type has a SCID field.
+ */
+static ossl_inline ossl_unused int
+ossl_quic_pkt_type_has_scid(uint32_t pkt_type)
+{
+    return pkt_type != QUIC_PKT_TYPE_1RTT;
 }
 
 /*
@@ -332,6 +350,14 @@ typedef struct quic_pkt_hdr_st {
      */
     unsigned int    unused      :4;
 
+    /*
+     * The 'Reserved' bits in an Initial, Handshake, 0-RTT or 1-RTT packet
+     * header's first byte. These are provided so that the caller can validate
+     * that they are zero, as this must be done after packet protection is
+     * successfully removed to avoid creating a timing channel.
+     */
+    unsigned int    reserved    :2;
+
     /* [L] Version field. Valid if (type != 1RTT). */
     uint32_t        version;
 
@@ -425,6 +451,9 @@ struct quic_pkt_hdr_ptrs_st {
  * If partial is 0, the input is assumed to have already had header protection
  * removed, and all header fields are decoded.
  *
+ * If nodata is 1, the input is assumed to have no payload data in it. Otherwise
+ * payload data must be present.
+ *
  * On success, the logical decode of the packet header is written to *hdr.
  * hdr->partial is set or cleared according to whether a partial decode was
  * performed. *ptrs is filled with pointers to various parts of the packet
@@ -441,6 +470,7 @@ struct quic_pkt_hdr_ptrs_st {
 int ossl_quic_wire_decode_pkt_hdr(PACKET *pkt,
                                   size_t short_conn_id_len,
                                   int partial,
+                                  int nodata,
                                   QUIC_PKT_HDR *hdr,
                                   QUIC_PKT_HDR_PTRS *ptrs);
 

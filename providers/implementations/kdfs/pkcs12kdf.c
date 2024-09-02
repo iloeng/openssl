@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -315,5 +315,5 @@ const OSSL_DISPATCH ossl_kdf_pkcs12_functions[] = {
     { OSSL_FUNC_KDF_GETTABLE_CTX_PARAMS,
       (void(*)(void))kdf_pkcs12_gettable_ctx_params },
     { OSSL_FUNC_KDF_GET_CTX_PARAMS, (void(*)(void))kdf_pkcs12_get_ctx_params },
-    { 0, NULL }
+    OSSL_DISPATCH_END
 };

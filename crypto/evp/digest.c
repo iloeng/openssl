@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -20,6 +20,7 @@
 #include <openssl/params.h>
 #include <openssl/core_names.h>
 #include "internal/cryptlib.h"
+#include "internal/nelem.h"
 #include "internal/provider.h"
 #include "internal/core.h"
 #include "crypto/evp.h"
@@ -77,7 +78,6 @@ static int evp_md_ctx_reset_ex(EVP_MD_CTX *ctx, int keep_fetched)
     if (ctx == NULL)
         return 1;
 
-#ifndef FIPS_MODULE
     /*
      * pctx should be freed by the user of EVP_MD_CTX
      * if EVP_MD_CTX_FLAG_KEEP_PKEY_CTX is set
@@ -86,7 +86,6 @@ static int evp_md_ctx_reset_ex(EVP_MD_CTX *ctx, int keep_fetched)
         EVP_PKEY_CTX_free(ctx->pctx);
         ctx->pctx = NULL;
     }
-#endif
 
     evp_md_ctx_clear_digest(ctx, 0, keep_fetched);
     if (!keep_fetched)
@@ -425,7 +424,7 @@ int EVP_DigestUpdate(EVP_MD_CTX *ctx, const void *data, size_t count)
 
     /* Code below to be removed when legacy support is dropped. */
  legacy:
-    return ctx->update(ctx, data, count);
+    return ctx->update != NULL ? ctx->update(ctx, data, count) : 0;
 }
 
 /* The caller can assume that this removes any secret data from the context */
@@ -447,7 +446,7 @@ int EVP_DigestFinal_ex(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *isize)
     if (ctx->digest == NULL)
         return 0;
 
-    sz = EVP_MD_get_size(ctx->digest);
+    sz = EVP_MD_CTX_get_size(ctx);
     if (sz < 0)
         return 0;
     mdsize = sz;
@@ -493,6 +492,7 @@ int EVP_DigestFinal_ex(EVP_MD_CTX *ctx, unsigned char *md, unsigned int *isize)
     return ret;
 }
 
+/* This is a one shot operation */
 int EVP_DigestFinalXOF(EVP_MD_CTX *ctx, unsigned char *md, size_t size)
 {
     int ret = 0;
@@ -517,10 +517,15 @@ int EVP_DigestFinalXOF(EVP_MD_CTX *ctx, unsigned char *md, size_t size)
         return 0;
     }
 
+    /*
+     * For backward compatibility we pass the XOFLEN via a param here so that
+     * older providers can use the supplied value. Ideally we should have just
+     * used the size passed into ctx->digest->dfinal().
+     */
     params[i++] = OSSL_PARAM_construct_size_t(OSSL_DIGEST_PARAM_XOFLEN, &size);
     params[i++] = OSSL_PARAM_construct_end();
 
-    if (EVP_MD_CTX_set_params(ctx, params) > 0)
+    if (EVP_MD_CTX_set_params(ctx, params) >= 0)
         ret = ctx->digest->dfinal(ctx->algctx, md, &size, size);
 
     ctx->flags |= EVP_MD_CTX_FLAG_FINALISED;
@@ -528,7 +533,7 @@ int EVP_DigestFinalXOF(EVP_MD_CTX *ctx, unsigned char *md, size_t size)
     return ret;
 
 legacy:
-    if (ctx->digest->flags & EVP_MD_FLAG_XOF
+    if (EVP_MD_xof(ctx->digest)
         && size <= INT_MAX
         && ctx->digest->md_ctrl(ctx, EVP_MD_CTRL_XOF_LEN, (int)size, NULL)) {
         ret = ctx->digest->final(ctx, md);
@@ -542,6 +547,27 @@ legacy:
     }
 
     return ret;
+}
+
+/* EVP_DigestSqueeze() can be called multiple times */
+int EVP_DigestSqueeze(EVP_MD_CTX *ctx, unsigned char *md, size_t size)
+{
+    if (ctx->digest == NULL) {
+        ERR_raise(ERR_LIB_EVP, EVP_R_INVALID_NULL_ALGORITHM);
+        return 0;
+    }
+
+    if (ctx->digest->prov == NULL) {
+        ERR_raise(ERR_LIB_EVP, EVP_R_INVALID_OPERATION);
+        return 0;
+    }
+
+    if (ctx->digest->dsqueeze == NULL) {
+        ERR_raise(ERR_LIB_EVP, EVP_R_METHOD_NOT_SUPPORTED);
+        return 0;
+    }
+
+    return ctx->digest->dsqueeze(ctx->algctx, md, &size, size);
 }
 
 EVP_MD_CTX *EVP_MD_CTX_dup(const EVP_MD_CTX *in)
@@ -801,7 +827,7 @@ int EVP_MD_CTX_get_params(EVP_MD_CTX *ctx, OSSL_PARAM params[])
         return pctx->op.sig.signature->get_ctx_md_params(pctx->op.sig.algctx,
                                                          params);
 
-    if (ctx->digest != NULL && ctx->digest->get_params != NULL)
+    if (ctx->digest != NULL && ctx->digest->get_ctx_params != NULL)
         return ctx->digest->get_ctx_params(ctx->algctx, params);
 
     return 0;
@@ -901,13 +927,9 @@ EVP_MD *evp_md_new(void)
 {
     EVP_MD *md = OPENSSL_zalloc(sizeof(*md));
 
-    if (md != NULL) {
-        md->lock = CRYPTO_THREAD_lock_new();
-        if (md->lock == NULL) {
-            OPENSSL_free(md);
-            return NULL;
-        }
-        md->refcnt = 1;
+    if (md != NULL && !CRYPTO_NEW_REF(&md->refcnt, 1)) {
+        OPENSSL_free(md);
+        return NULL;
     }
     return md;
 }
@@ -950,6 +972,11 @@ static int evp_md_cache_constants(EVP_MD *md)
     size_t mdsize = 0;
     OSSL_PARAM params[5];
 
+    /*
+     * Note that these parameters are 'constants' that are only set up
+     * during the EVP_MD_fetch(). For this reason the XOF functions set the
+     * md_size to 0, since the output size is unknown.
+     */
     params[0] = OSSL_PARAM_construct_size_t(OSSL_DIGEST_PARAM_BLOCK_SIZE, &blksz);
     params[1] = OSSL_PARAM_construct_size_t(OSSL_DIGEST_PARAM_SIZE, &mdsize);
     params[2] = OSSL_PARAM_construct_int(OSSL_DIGEST_PARAM_XOF, &xof);
@@ -1027,6 +1054,12 @@ static void *evp_md_from_algorithm(int name_id,
                 fncnt++;
             }
             break;
+        case OSSL_FUNC_DIGEST_SQUEEZE:
+            if (md->dsqueeze == NULL) {
+                md->dsqueeze = OSSL_FUNC_digest_squeeze(fns);
+                fncnt++;
+            }
+            break;
         case OSSL_FUNC_DIGEST_DIGEST:
             if (md->digest == NULL)
                 md->digest = OSSL_FUNC_digest_digest(fns);
@@ -1070,7 +1103,7 @@ static void *evp_md_from_algorithm(int name_id,
             break;
         }
     }
-    if ((fncnt != 0 && fncnt != 5)
+    if ((fncnt != 0 && fncnt != 5 && fncnt != 6)
         || (fncnt == 0 && md->digest == NULL)) {
         /*
          * In order to be a consistent set of functions we either need the
@@ -1120,7 +1153,7 @@ int EVP_MD_up_ref(EVP_MD *md)
     int ref = 0;
 
     if (md->origin == EVP_ORIG_DYNAMIC)
-        CRYPTO_UP_REF(&md->refcnt, &ref, md->lock);
+        CRYPTO_UP_REF(&md->refcnt, &ref);
     return 1;
 }
 
@@ -1131,7 +1164,7 @@ void EVP_MD_free(EVP_MD *md)
     if (md == NULL || md->origin != EVP_ORIG_DYNAMIC)
         return;
 
-    CRYPTO_DOWN_REF(&md->refcnt, &i, md->lock);
+    CRYPTO_DOWN_REF(&md->refcnt, &i);
     if (i > 0)
         return;
     evp_md_free_int(md);
@@ -1144,4 +1177,57 @@ void EVP_MD_do_all_provided(OSSL_LIB_CTX *libctx,
     evp_generic_do_all(libctx, OSSL_OP_DIGEST,
                        (void (*)(void *, void *))fn, arg,
                        evp_md_from_algorithm, evp_md_up_ref, evp_md_free);
+}
+
+typedef struct {
+    int md_nid;
+    int hmac_nid;
+} ossl_hmacmd_pair;
+
+static const ossl_hmacmd_pair ossl_hmacmd_pairs[] = {
+    {NID_sha1, NID_hmacWithSHA1},
+    {NID_md5, NID_hmacWithMD5},
+    {NID_sha224, NID_hmacWithSHA224},
+    {NID_sha256, NID_hmacWithSHA256},
+    {NID_sha384, NID_hmacWithSHA384},
+    {NID_sha512, NID_hmacWithSHA512},
+    {NID_id_GostR3411_94, NID_id_HMACGostR3411_94},
+    {NID_id_GostR3411_2012_256, NID_id_tc26_hmac_gost_3411_2012_256},
+    {NID_id_GostR3411_2012_512, NID_id_tc26_hmac_gost_3411_2012_512},
+    {NID_sha3_224, NID_hmac_sha3_224},
+    {NID_sha3_256, NID_hmac_sha3_256},
+    {NID_sha3_384, NID_hmac_sha3_384},
+    {NID_sha3_512, NID_hmac_sha3_512},
+    {NID_sha512_224, NID_hmacWithSHA512_224},
+    {NID_sha512_256, NID_hmacWithSHA512_256}
+};
+
+int ossl_hmac2mdnid(int hmac_nid)
+{
+    int md_nid = NID_undef;
+    size_t i;
+
+    for (i = 0; i < OSSL_NELEM(ossl_hmacmd_pairs); i++) {
+        if (ossl_hmacmd_pairs[i].hmac_nid == hmac_nid) {
+            md_nid = ossl_hmacmd_pairs[i].md_nid;
+            break;
+        }
+    }
+
+    return md_nid;
+}
+
+int ossl_md2hmacnid(int md_nid)
+{
+    int hmac_nid = NID_undef;
+    size_t i;
+
+    for (i = 0; i < OSSL_NELEM(ossl_hmacmd_pairs); i++) {
+        if (ossl_hmacmd_pairs[i].md_nid == md_nid) {
+            hmac_nid = ossl_hmacmd_pairs[i].hmac_nid;
+            break;
+        }
+    }
+
+    return hmac_nid;
 }

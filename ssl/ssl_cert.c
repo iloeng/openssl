@@ -29,11 +29,11 @@
 # ifdef _WIN32
 #  define stat _stat
 # endif
+# ifndef S_ISDIR
+#  define S_ISDIR(a) (((a) & S_IFMT) == S_IFDIR)
+# endif
 #endif
 
-#ifndef S_ISDIR
-# define S_ISDIR(a) (((a) & S_IFMT) == S_IFDIR)
-#endif
 
 static int ssl_security_default_callback(const SSL *s, const SSL_CTX *ctx,
                                          int op, int bits, int nid, void *other,
@@ -78,13 +78,10 @@ CERT *ssl_cert_new(size_t ssl_pkey_num)
     }
 
     ret->key = &(ret->pkeys[SSL_PKEY_RSA]);
-    ret->references = 1;
     ret->sec_cb = ssl_security_default_callback;
     ret->sec_level = OPENSSL_TLS_SECURITY_LEVEL;
     ret->sec_ex = NULL;
-    ret->lock = CRYPTO_THREAD_lock_new();
-    if (ret->lock == NULL) {
-        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+    if (!CRYPTO_NEW_REF(&ret->references, 1)) {
         OPENSSL_free(ret->pkeys);
         OPENSSL_free(ret);
         return NULL;
@@ -111,11 +108,8 @@ CERT *ssl_cert_dup(CERT *cert)
         return NULL;
     }
 
-    ret->references = 1;
     ret->key = &ret->pkeys[cert->key - cert->pkeys];
-    ret->lock = CRYPTO_THREAD_lock_new();
-    if (ret->lock == NULL) {
-        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+    if (!CRYPTO_NEW_REF(&ret->references, 1)) {
         OPENSSL_free(ret->pkeys);
         OPENSSL_free(ret);
         return NULL;
@@ -242,7 +236,7 @@ void ssl_cert_clear_certs(CERT *c)
 #ifndef OPENSSL_NO_COMP_ALG
     int j;
 #endif
-    
+
     if (c == NULL)
         return;
     for (i = 0; i < c->ssl_pkey_num; i++) {
@@ -272,7 +266,7 @@ void ssl_cert_free(CERT *c)
 
     if (c == NULL)
         return;
-    CRYPTO_DOWN_REF(&c->references, &i, c->lock);
+    CRYPTO_DOWN_REF(&c->references, &i);
     REF_PRINT_COUNT("CERT", c);
     if (i > 0)
         return;
@@ -291,7 +285,7 @@ void ssl_cert_free(CERT *c)
     OPENSSL_free(c->psk_identity_hint);
 #endif
     OPENSSL_free(c->pkeys);
-    CRYPTO_THREAD_lock_free(c->lock);
+    CRYPTO_FREE_REF(&c->references);
     OPENSSL_free(c);
 }
 
@@ -819,16 +813,14 @@ STACK_OF(X509_NAME) *SSL_load_client_CA_file(const char *file)
     return SSL_load_client_CA_file_ex(file, NULL, NULL);
 }
 
-int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
-                                        const char *file)
+static int add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
+                                           const char *file,
+                                           LHASH_OF(X509_NAME) *name_hash)
 {
     BIO *in;
     X509 *x = NULL;
     X509_NAME *xn = NULL;
     int ret = 1;
-    int (*oldcmp) (const X509_NAME *const *a, const X509_NAME *const *b);
-
-    oldcmp = sk_X509_NAME_set_cmp_func(stack, xname_sk_cmp);
 
     in = BIO_new(BIO_s_file());
 
@@ -848,12 +840,15 @@ int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
         xn = X509_NAME_dup(xn);
         if (xn == NULL)
             goto err;
-        if (sk_X509_NAME_find(stack, xn) >= 0) {
+        if (lh_X509_NAME_retrieve(name_hash, xn) != NULL) {
             /* Duplicate. */
             X509_NAME_free(xn);
         } else if (!sk_X509_NAME_push(stack, xn)) {
             X509_NAME_free(xn);
             goto err;
+        } else {
+            /* Successful insert, add to hash table */
+            lh_X509_NAME_insert(name_hash, xn);
         }
     }
 
@@ -865,7 +860,42 @@ int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
  done:
     BIO_free(in);
     X509_free(x);
-    (void)sk_X509_NAME_set_cmp_func(stack, oldcmp);
+    return ret;
+}
+
+int SSL_add_file_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
+                                        const char *file)
+{
+    X509_NAME *xn = NULL;
+    int ret = 1;
+    int idx = 0;
+    int num = 0;
+    LHASH_OF(X509_NAME) *name_hash = lh_X509_NAME_new(xname_hash, xname_cmp);
+
+    if (name_hash == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+        goto err;
+    }
+
+    /*
+     * Pre-populate the lhash with the existing entries of the stack, since
+     * using the LHASH_OF is much faster for duplicate checking. That's because
+     * xname_cmp converts the X509_NAMEs to DER involving a memory allocation
+     * for every single invocation of the comparison function.
+     */
+    num = sk_X509_NAME_num(stack);
+    for (idx = 0; idx < num; idx++) {
+        xn = sk_X509_NAME_value(stack, idx);
+        lh_X509_NAME_insert(name_hash, xn);
+    }
+
+    ret = add_file_cert_subjects_to_stack(stack, file, name_hash);
+    goto done;
+
+ err:
+    ret = 0;
+ done:
+    lh_X509_NAME_free(name_hash);
     return ret;
 }
 
@@ -875,14 +905,39 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
     OPENSSL_DIR_CTX *d = NULL;
     const char *filename;
     int ret = 0;
+    X509_NAME *xn = NULL;
+    int idx = 0;
+    int num = 0;
+    LHASH_OF(X509_NAME) *name_hash = lh_X509_NAME_new(xname_hash, xname_cmp);
 
-    /* Note that a side effect is that the CAs will be sorted by name */
+    if (name_hash == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_CRYPTO_LIB);
+        goto err;
+    }
+
+    /*
+     * Pre-populate the lhash with the existing entries of the stack, since
+     * using the LHASH_OF is much faster for duplicate checking. That's because
+     * xname_cmp converts the X509_NAMEs to DER involving a memory allocation
+     * for every single invocation of the comparison function.
+     */
+    num = sk_X509_NAME_num(stack);
+    for (idx = 0; idx < num; idx++) {
+        xn = sk_X509_NAME_value(stack, idx);
+        lh_X509_NAME_insert(name_hash, xn);
+    }
 
     while ((filename = OPENSSL_DIR_read(&d, dir))) {
         char buf[1024];
         int r;
+#ifndef OPENSSL_NO_POSIX_IO
         struct stat st;
 
+#else
+        /* Cannot use stat so just skip current and parent directories */
+        if (strcmp(filename, ".") == 0 || strcmp(filename, "..") == 0)
+            continue;
+#endif
         if (strlen(dir) + strlen(filename) + 2 > sizeof(buf)) {
             ERR_raise(ERR_LIB_SSL, SSL_R_PATH_TOO_LONG);
             goto err;
@@ -892,12 +947,14 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
 #else
         r = BIO_snprintf(buf, sizeof(buf), "%s/%s", dir, filename);
 #endif
+#ifndef OPENSSL_NO_POSIX_IO
         /* Skip subdirectories */
         if (!stat(buf, &st) && S_ISDIR(st.st_mode))
             continue;
+#endif
         if (r <= 0 || r >= (int)sizeof(buf))
             goto err;
-        if (!SSL_add_file_cert_subjects_to_stack(stack, buf))
+        if (!add_file_cert_subjects_to_stack(stack, buf, name_hash))
             goto err;
     }
 
@@ -913,6 +970,7 @@ int SSL_add_dir_cert_subjects_to_stack(STACK_OF(X509_NAME) *stack,
  err:
     if (d)
         OPENSSL_DIR_end(&d);
+    lh_X509_NAME_free(name_hash);
 
     return ret;
 }
@@ -1238,13 +1296,13 @@ int ssl_cert_lookup_by_nid(int nid, size_t *pidx, SSL_CTX *ctx)
     return 0;
 }
 
-SSL_CERT_LOOKUP *ssl_cert_lookup_by_pkey(const EVP_PKEY *pk, size_t *pidx, SSL_CTX *ctx)
+const SSL_CERT_LOOKUP *ssl_cert_lookup_by_pkey(const EVP_PKEY *pk, size_t *pidx, SSL_CTX *ctx)
 {
     size_t i;
 
     /* check classic pk types */
     for (i = 0; i < OSSL_NELEM(ssl_cert_info); i++) {
-        SSL_CERT_LOOKUP *tmp_lu = &ssl_cert_info[i];
+        const SSL_CERT_LOOKUP *tmp_lu = &ssl_cert_info[i];
 
         if (EVP_PKEY_is_a(pk, OBJ_nid2sn(tmp_lu->nid))
             || EVP_PKEY_is_a(pk, OBJ_nid2ln(tmp_lu->nid))) {
@@ -1268,7 +1326,7 @@ SSL_CERT_LOOKUP *ssl_cert_lookup_by_pkey(const EVP_PKEY *pk, size_t *pidx, SSL_C
     return NULL;
 }
 
-SSL_CERT_LOOKUP *ssl_cert_lookup_by_idx(size_t idx, SSL_CTX *ctx)
+const SSL_CERT_LOOKUP *ssl_cert_lookup_by_idx(size_t idx, SSL_CTX *ctx)
 {
     if (idx >= (OSSL_NELEM(ssl_cert_info) + ctx->sigalg_list_len))
         return NULL;

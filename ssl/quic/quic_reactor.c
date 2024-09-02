@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -8,13 +8,15 @@
  */
 #include "internal/quic_reactor.h"
 #include "internal/common.h"
+#include "internal/thread_arch.h"
 
 /*
  * Core I/O Reactor Framework
  * ==========================
  */
 void ossl_quic_reactor_init(QUIC_REACTOR *rtor,
-                            void (*tick_cb)(QUIC_TICK_RESULT *res, void *arg),
+                            void (*tick_cb)(QUIC_TICK_RESULT *res, void *arg,
+                                            uint32_t flags),
                             void *tick_cb_arg,
                             OSSL_TIME initial_tick_deadline)
 {
@@ -22,6 +24,8 @@ void ossl_quic_reactor_init(QUIC_REACTOR *rtor,
     rtor->poll_w.type       = BIO_POLL_DESCRIPTOR_TYPE_NONE;
     rtor->net_read_desired  = 0;
     rtor->net_write_desired = 0;
+    rtor->can_poll_r        = 0;
+    rtor->can_poll_w        = 0;
     rtor->tick_deadline     = initial_tick_deadline;
 
     rtor->tick_cb           = tick_cb;
@@ -30,22 +34,50 @@ void ossl_quic_reactor_init(QUIC_REACTOR *rtor,
 
 void ossl_quic_reactor_set_poll_r(QUIC_REACTOR *rtor, const BIO_POLL_DESCRIPTOR *r)
 {
-    rtor->poll_r = *r;
+    if (r == NULL)
+        rtor->poll_r.type = BIO_POLL_DESCRIPTOR_TYPE_NONE;
+    else
+        rtor->poll_r = *r;
+
+    rtor->can_poll_r
+        = ossl_quic_reactor_can_support_poll_descriptor(rtor, &rtor->poll_r);
 }
 
 void ossl_quic_reactor_set_poll_w(QUIC_REACTOR *rtor, const BIO_POLL_DESCRIPTOR *w)
 {
-    rtor->poll_w = *w;
+    if (w == NULL)
+        rtor->poll_w.type = BIO_POLL_DESCRIPTOR_TYPE_NONE;
+    else
+        rtor->poll_w = *w;
+
+    rtor->can_poll_w
+        = ossl_quic_reactor_can_support_poll_descriptor(rtor, &rtor->poll_w);
 }
 
-const BIO_POLL_DESCRIPTOR *ossl_quic_reactor_get_poll_r(QUIC_REACTOR *rtor)
+const BIO_POLL_DESCRIPTOR *ossl_quic_reactor_get_poll_r(const QUIC_REACTOR *rtor)
 {
     return &rtor->poll_r;
 }
 
-const BIO_POLL_DESCRIPTOR *ossl_quic_reactor_get_poll_w(QUIC_REACTOR *rtor)
+const BIO_POLL_DESCRIPTOR *ossl_quic_reactor_get_poll_w(const QUIC_REACTOR *rtor)
 {
     return &rtor->poll_w;
+}
+
+int ossl_quic_reactor_can_support_poll_descriptor(const QUIC_REACTOR *rtor,
+                                                  const BIO_POLL_DESCRIPTOR *d)
+{
+    return d->type == BIO_POLL_DESCRIPTOR_TYPE_SOCK_FD;
+}
+
+int ossl_quic_reactor_can_poll_r(const QUIC_REACTOR *rtor)
+{
+    return rtor->can_poll_r;
+}
+
+int ossl_quic_reactor_can_poll_w(const QUIC_REACTOR *rtor)
+{
+    return rtor->can_poll_w;
 }
 
 int ossl_quic_reactor_net_read_desired(QUIC_REACTOR *rtor)
@@ -63,7 +95,7 @@ OSSL_TIME ossl_quic_reactor_get_tick_deadline(QUIC_REACTOR *rtor)
     return rtor->tick_deadline;
 }
 
-int ossl_quic_reactor_tick(QUIC_REACTOR *rtor)
+int ossl_quic_reactor_tick(QUIC_REACTOR *rtor, uint32_t flags)
 {
     QUIC_TICK_RESULT res = {0};
 
@@ -74,7 +106,7 @@ int ossl_quic_reactor_tick(QUIC_REACTOR *rtor)
      * best effort. If something fatal happens with a connection we can report
      * it on the next actual application I/O call.
      */
-    rtor->tick_cb(&res, rtor->tick_cb_arg);
+    rtor->tick_cb(&res, rtor->tick_cb_arg, flags);
 
     rtor->net_read_desired  = res.net_read_desired;
     rtor->net_write_desired = res.net_write_desired;
@@ -121,10 +153,18 @@ int ossl_quic_reactor_tick(QUIC_REACTOR *rtor)
  * Returns 0 on error and 1 on success. Timeout expiry is considered a success
  * condition. We don't elaborate our return values here because the way we are
  * actually using this doesn't currently care.
+ *
+ * If mutex is non-NULL, it is assumed to be held for write and is unlocked for
+ * the duration of the call.
+ *
+ * Precondition:   mutex is NULL or is held for write (unchecked)
+ * Postcondition:  mutex is NULL or is held for write (unless
+ *                   CRYPTO_THREAD_write_lock fails)
  */
 static int poll_two_fds(int rfd, int rfd_want_read,
                         int wfd, int wfd_want_write,
-                        OSSL_TIME deadline)
+                        OSSL_TIME deadline,
+                        CRYPTO_MUTEX *mutex)
 {
 #if defined(OPENSSL_SYS_WINDOWS) || !defined(POLLIN)
     fd_set rfd_set, wfd_set, efd_set;
@@ -165,6 +205,11 @@ static int poll_two_fds(int rfd, int rfd_want_read,
         /* Do not block forever; should not happen. */
         return 0;
 
+# if defined(OPENSSL_THREADS)
+    if (mutex != NULL)
+        ossl_crypto_mutex_unlock(mutex);
+# endif
+
     do {
         /*
          * select expects a timeout, not a deadline, so do the conversion.
@@ -186,6 +231,11 @@ static int poll_two_fds(int rfd, int rfd_want_read,
 
         pres = select(maxfd + 1, &rfd_set, &wfd_set, &efd_set, ptv);
     } while (pres == -1 && get_last_socket_error_is_eintr());
+
+# if defined(OPENSSL_THREADS)
+    if (mutex != NULL)
+        ossl_crypto_mutex_lock(mutex);
+# endif
 
     return pres < 0 ? 0 : 1;
 #else
@@ -216,6 +266,11 @@ static int poll_two_fds(int rfd, int rfd_want_read,
         /* Do not block forever; should not happen. */
         return 0;
 
+# if defined(OPENSSL_THREADS)
+    if (mutex != NULL)
+        ossl_crypto_mutex_unlock(mutex);
+# endif
+
     do {
         if (ossl_time_is_infinite(deadline)) {
             timeout_ms = -1;
@@ -227,6 +282,11 @@ static int poll_two_fds(int rfd, int rfd_want_read,
 
         pres = poll(pfds, npfd, timeout_ms);
     } while (pres == -1 && get_last_socket_error_is_eintr());
+
+# if defined(OPENSSL_THREADS)
+    if (mutex != NULL)
+        ossl_crypto_mutex_lock(mutex);
+# endif
 
     return pres < 0 ? 0 : 1;
 #endif
@@ -250,10 +310,18 @@ static int poll_descriptor_to_fd(const BIO_POLL_DESCRIPTOR *d, int *fd)
 /*
  * Poll up to two abstract poll descriptors. Currently we only support
  * poll descriptors which represent FDs.
+ *
+ * If mutex is non-NULL, it is assumed be a lock currently held for write and is
+ * unlocked for the duration of any wait.
+ *
+ * Precondition:   mutex is NULL or is held for write (unchecked)
+ * Postcondition:  mutex is NULL or is held for write (unless
+ *                   CRYPTO_THREAD_write_lock fails)
  */
 static int poll_two_descriptors(const BIO_POLL_DESCRIPTOR *r, int r_want_read,
                                 const BIO_POLL_DESCRIPTOR *w, int w_want_write,
-                                OSSL_TIME deadline)
+                                OSSL_TIME deadline,
+                                CRYPTO_MUTEX *mutex)
 {
     int rfd, wfd;
 
@@ -261,12 +329,24 @@ static int poll_two_descriptors(const BIO_POLL_DESCRIPTOR *r, int r_want_read,
         || !poll_descriptor_to_fd(w, &wfd))
         return 0;
 
-    return poll_two_fds(rfd, r_want_read, wfd, w_want_write, deadline);
+    return poll_two_fds(rfd, r_want_read, wfd, w_want_write, deadline, mutex);
 }
 
+/*
+ * Block until a predicate function evaluates to true.
+ *
+ * If mutex is non-NULL, it is assumed be a lock currently held for write and is
+ * unlocked for the duration of any wait.
+ *
+ * Precondition:   Must hold channel write lock (unchecked)
+ * Precondition:   mutex is NULL or is held for write (unchecked)
+ * Postcondition:  mutex is NULL or is held for write (unless
+ *                   CRYPTO_THREAD_write_lock fails)
+ */
 int ossl_quic_reactor_block_until_pred(QUIC_REACTOR *rtor,
                                        int (*pred)(void *arg), void *pred_arg,
-                                       uint32_t flags)
+                                       uint32_t flags,
+                                       CRYPTO_MUTEX *mutex)
 {
     int res;
 
@@ -275,7 +355,7 @@ int ossl_quic_reactor_block_until_pred(QUIC_REACTOR *rtor,
             flags &= ~SKIP_FIRST_TICK;
         else
             /* best effort */
-            ossl_quic_reactor_tick(rtor);
+            ossl_quic_reactor_tick(rtor, 0);
 
         if ((res = pred(pred_arg)) != 0)
             return res;
@@ -284,20 +364,22 @@ int ossl_quic_reactor_block_until_pred(QUIC_REACTOR *rtor,
                                   ossl_quic_reactor_net_read_desired(rtor),
                                   ossl_quic_reactor_get_poll_w(rtor),
                                   ossl_quic_reactor_net_write_desired(rtor),
-                                  ossl_quic_reactor_get_tick_deadline(rtor)))
+                                  ossl_quic_reactor_get_tick_deadline(rtor),
+                                  mutex))
             /*
              * We don't actually care why the call succeeded (timeout, FD
              * readiness), we just call reactor_tick and start trying to do I/O
              * things again. If poll_two_fds returns 0, this is some other
              * non-timeout failure and we should stop here.
              *
-             * TODO(QUIC): In the future we could avoid unnecessary syscalls by
-             * not retrying network I/O that isn't ready based on the result of
-             * the poll call. However this might be difficult because it
-             * requires we do the call to poll(2) or equivalent syscall
-             * ourselves, whereas in the general case the application does the
-             * polling and just calls SSL_tick(). Implementing this optimisation
-             * in the future will probably therefore require API changes.
+             * TODO(QUIC FUTURE): In the future we could avoid unnecessary
+             * syscalls by not retrying network I/O that isn't ready based
+             * on the result of the poll call. However this might be difficult
+             * because it requires we do the call to poll(2) or equivalent
+             * syscall ourselves, whereas in the general case the application
+             * does the polling and just calls SSL_handle_events().
+             * Implementing this optimisation in the future will probably
+             * therefore require API changes.
              */
             return 0;
     }

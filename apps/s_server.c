@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2024 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  * Copyright 2005 Nokia. All rights reserved.
  *
@@ -266,7 +266,7 @@ typedef struct {
     char buff[1];
 } EBCDIC_OUTBUFF;
 
-static const BIO_METHOD *BIO_f_ebcdic_filter()
+static const BIO_METHOD *BIO_f_ebcdic_filter(void)
 {
     if (methods_ebcdic == NULL) {
         methods_ebcdic = BIO_meth_new(BIO_TYPE_EBCDIC_FILTER,
@@ -476,7 +476,10 @@ static int get_ocsp_resp_from_responder(SSL *s, tlsextstatusctx *srctx,
     char *proxy = NULL, *no_proxy = NULL;
     int use_ssl;
     STACK_OF(OPENSSL_STRING) *aia = NULL;
-    X509 *x = NULL;
+    X509 *x = NULL, *cert;
+    X509_NAME *iname;
+    STACK_OF(X509) *chain = NULL;
+    SSL_CTX *ssl_ctx;
     X509_STORE_CTX *inctx = NULL;
     X509_OBJECT *obj;
     OCSP_REQUEST *req = NULL;
@@ -487,6 +490,7 @@ static int get_ocsp_resp_from_responder(SSL *s, tlsextstatusctx *srctx,
 
     /* Build up OCSP query from server certificate */
     x = SSL_get_certificate(s);
+    iname = X509_get_issuer_name(x);
     aia = X509_get1_ocsp(x);
     if (aia != NULL) {
         if (!OSSL_HTTP_parse_url(sk_OPENSSL_STRING_value(aia, 0), &use_ssl,
@@ -511,21 +515,33 @@ static int get_ocsp_resp_from_responder(SSL *s, tlsextstatusctx *srctx,
     proxy = srctx->proxy;
     no_proxy = srctx->no_proxy;
 
-    inctx = X509_STORE_CTX_new();
-    if (inctx == NULL)
+    ssl_ctx = SSL_get_SSL_CTX(s);
+    if (!SSL_CTX_get0_chain_certs(ssl_ctx, &chain))
         goto err;
-    if (!X509_STORE_CTX_init(inctx,
-                             SSL_CTX_get_cert_store(SSL_get_SSL_CTX(s)),
-                             NULL, NULL))
-        goto err;
-    obj = X509_STORE_CTX_get_obj_by_subject(inctx, X509_LU_X509,
-                                            X509_get_issuer_name(x));
-    if (obj == NULL) {
-        BIO_puts(bio_err, "cert_status: Can't retrieve issuer certificate.\n");
-        goto done;
+    for (i = 0; i < sk_X509_num(chain); i++) {
+        /* check the untrusted certificate chain (-cert_chain option) */
+        cert = sk_X509_value(chain, i);
+        if (X509_name_cmp(iname, X509_get_subject_name(cert)) == 0) {
+            /* the issuer certificate is found */
+            id = OCSP_cert_to_id(NULL, x, cert);
+            break;
+        }
     }
-    id = OCSP_cert_to_id(NULL, x, X509_OBJECT_get0_X509(obj));
-    X509_OBJECT_free(obj);
+    if (id == NULL) {
+        inctx = X509_STORE_CTX_new();
+        if (inctx == NULL)
+            goto err;
+        if (!X509_STORE_CTX_init(inctx, SSL_CTX_get_cert_store(ssl_ctx),
+                                 NULL, NULL))
+            goto err;
+        obj = X509_STORE_CTX_get_obj_by_subject(inctx, X509_LU_X509, iname);
+        if (obj == NULL) {
+            BIO_puts(bio_err, "cert_status: Can't retrieve issuer certificate.\n");
+            goto done;
+        }
+        id = OCSP_cert_to_id(NULL, x, X509_OBJECT_get0_X509(obj));
+        X509_OBJECT_free(obj);
+    }
     if (id == NULL)
         goto err;
     req = OCSP_REQUEST_new();
@@ -799,7 +815,7 @@ const OPTIONS s_server_options[] = {
      "second server certificate chain file in PEM format"},
     {"dkey", OPT_DKEY, '<',
      "Second private key file to use (usually for DSA)"},
-    {"dkeyform", OPT_DKEYFORM, 'F',
+    {"dkeyform", OPT_DKEYFORM, 'f',
      "Second key file format (ENGINE, other values ignored)"},
     {"dpass", OPT_DPASS, 's',
      "Second private key and cert file pass phrase source"},
@@ -1714,6 +1730,11 @@ int s_server_main(int argc, char *argv[])
         BIO_printf(bio_err, "Can only use -listen with DTLS\n");
         goto end;
     }
+
+    if (rev && socket_type == SOCK_DGRAM) {
+        BIO_printf(bio_err, "Can't use -rev with DTLS\n");
+        goto end;
+    }
 #endif
 
     if (tfo && socket_type != SOCK_STREAM) {
@@ -2413,7 +2434,7 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
     char *buf = NULL;
     fd_set readfds;
     int ret = 1, width;
-    int k, i;
+    int k;
     unsigned long l;
     SSL *con = NULL;
     BIO *sbio;
@@ -2600,6 +2621,7 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
     else
         width = s + 1;
     for (;;) {
+        int i;
         int read_from_terminal;
         int read_from_sslcon;
 
@@ -2699,7 +2721,6 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
                     SSL_renegotiate(con);
                     i = SSL_do_handshake(con);
                     printf("SSL_do_handshake -> %d\n", i);
-                    i = 0;      /* 13; */
                     continue;
                 }
                 if ((buf[0] == 'R') && ((buf[1] == '\n') || (buf[1] == '\r'))) {
@@ -2709,7 +2730,6 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
                     SSL_renegotiate(con);
                     i = SSL_do_handshake(con);
                     printf("SSL_do_handshake -> %d\n", i);
-                    i = 0;      /* 13; */
                     continue;
                 }
                 if ((buf[0] == 'K' || buf[0] == 'k')
@@ -2719,7 +2739,6 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
                                         : SSL_KEY_UPDATE_NOT_REQUESTED);
                     i = SSL_do_handshake(con);
                     printf("SSL_do_handshake -> %d\n", i);
-                    i = 0;
                     continue;
                 }
                 if (buf[0] == 'c' && ((buf[1] == '\n') || (buf[1] == '\r'))) {
@@ -2731,7 +2750,6 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
                     } else {
                         i = SSL_do_handshake(con);
                         printf("SSL_do_handshake -> %d\n", i);
-                        i = 0;
                     }
                     continue;
                 }
@@ -3567,7 +3585,7 @@ static int www_body(int s, int stype, int prot, unsigned char *context)
             break;
     }
  end:
-    /* make sure we re-use sessions */
+    /* make sure we reuse sessions */
     do_ssl_shutdown(con);
 
  err:
@@ -3724,7 +3742,7 @@ static int rev_body(int s, int stype, int prot, unsigned char *context)
         }
     }
  end:
-    /* make sure we re-use sessions */
+    /* make sure we reuse sessions */
     do_ssl_shutdown(con);
 
  err:

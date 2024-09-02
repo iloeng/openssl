@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -133,7 +133,7 @@ const OPTIONS cms_options[] = {
     {"binary", OPT_BINARY, '-',
      "Treat input as binary: do not translate to canonical form"},
     {"crlfeol", OPT_CRLFEOL, '-',
-     "Use CRLF as EOL termination instead of CR only" },
+     "Use CRLF as EOL termination instead of LF only" },
     {"asciicrlf", OPT_ASCIICRLF, '-',
      "Perform CRLF canonicalisation when signing"},
 
@@ -175,7 +175,10 @@ const OPTIONS cms_options[] = {
     OPT_SECTION("Signing"),
     {"md", OPT_MD, 's', "Digest algorithm to use"},
     {"signer", OPT_SIGNER, 's', "Signer certificate input file"},
-    {"certfile", OPT_CERTFILE, '<', "Other certificates file"},
+    {"certfile", OPT_CERTFILE, '<',
+     "Extra signer and intermediate CA certificates to include when signing"},
+    {OPT_MORE_STR, 0, 0,
+     "or to use as preferred signer certs and for chain building when verifying"},
     {"cades", OPT_CADES, '-',
      "Include signingCertificate attribute (CAdES-BES)"},
     {"nodetach", OPT_NODETACH, '-', "Use opaque signing"},
@@ -628,7 +631,8 @@ int cms_main(int argc, char **argv)
                                  "recipient certificate file");
                 if (cert == NULL)
                     goto end;
-                sk_X509_push(encerts, cert);
+                if (!sk_X509_push(encerts, cert))
+                    goto end;
                 cert = NULL;
             } else {
                 recipfile = opt_arg();
@@ -802,6 +806,9 @@ int cms_main(int argc, char **argv)
     if ((operation & SMIME_IP) == 0 && contfile != NULL)
         BIO_printf(bio_err,
                    "Warning: -contfile option is ignored for the given operation\n");
+    if (operation != SMIME_ENCRYPT && *argv != NULL)
+        BIO_printf(bio_err,
+                   "Warning: recipient certificate file parameters ignored for operation other than -encrypt\n");
 
     if ((flags & CMS_BINARY) != 0) {
         if (!(operation & SMIME_OP))
@@ -829,19 +836,14 @@ int cms_main(int argc, char **argv)
             goto end;
         }
 
-        if (*argv != NULL) {
-            if (operation == SMIME_ENCRYPT) {
-                for (; *argv != NULL; argv++) {
-                    cert = load_cert(*argv, FORMAT_UNDEF,
-                                     "recipient certificate file");
-                    if (cert == NULL)
-                        goto end;
-                    sk_X509_push(encerts, cert);
-                    cert = NULL;
-                }
-            } else {
-                BIO_printf(bio_err, "Warning: recipient certificate file parameters ignored for operation other than -encrypt\n");
-            }
+        for (; *argv != NULL; argv++) {
+            cert = load_cert(*argv, FORMAT_UNDEF,
+                             "recipient certificate file");
+            if (cert == NULL)
+                goto end;
+            if (!sk_X509_push(encerts, cert))
+                goto end;
+            cert = NULL;
         }
     }
 
@@ -1450,6 +1452,7 @@ static CMS_ReceiptRequest
                       STACK_OF(OPENSSL_STRING) *rr_from)
 {
     STACK_OF(GENERAL_NAMES) *rct_to = NULL, *rct_from = NULL;
+    CMS_ReceiptRequest *rr;
 
     rct_to = make_names_stack(rr_to);
     if (rct_to == NULL)
@@ -1461,10 +1464,14 @@ static CMS_ReceiptRequest
     } else {
         rct_from = NULL;
     }
-    return CMS_ReceiptRequest_create0_ex(NULL, -1, rr_allorfirst, rct_from,
-                                         rct_to, app_get0_libctx());
+    rr = CMS_ReceiptRequest_create0_ex(NULL, -1, rr_allorfirst, rct_from,
+                                       rct_to, app_get0_libctx());
+    if (rr == NULL)
+        goto err;
+    return rr;
  err:
     sk_GENERAL_NAMES_pop_free(rct_to, GENERAL_NAMES_free);
+    sk_GENERAL_NAMES_pop_free(rct_from, GENERAL_NAMES_free);
     return NULL;
 }
 

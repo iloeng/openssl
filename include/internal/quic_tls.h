@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2022-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -12,9 +12,9 @@
 
 # include <openssl/ssl.h>
 # include "internal/quic_stream.h"
+# include "internal/quic_predef.h"
 
-
-typedef struct quic_tls_st QUIC_TLS;
+# ifndef OPENSSL_NO_QUIC
 
 typedef struct quic_tls_args_st {
     /*
@@ -32,9 +32,18 @@ typedef struct quic_tls_args_st {
     int (*crypto_send_cb)(const unsigned char *buf, size_t buf_len,
                           size_t *consumed, void *arg);
     void *crypto_send_cb_arg;
-    int (*crypto_recv_cb)(unsigned char *buf, size_t buf_len,
-                          size_t *bytes_read, void *arg);
-    void *crypto_recv_cb_arg;
+
+    /*
+     * Call to receive crypto stream data. A pointer to the underlying buffer
+     * is provided, and subsequently released to avoid unnecessary copying of
+     * data.
+     */
+    int (*crypto_recv_rcd_cb)(const unsigned char **buf, size_t *bytes_read,
+                              void *arg);
+    void *crypto_recv_rcd_cb_arg;
+    int (*crypto_release_rcd_cb)(size_t bytes_read, void *arg);
+    void *crypto_release_rcd_cb_arg;
+
 
     /* Called when a traffic secret is available for a given encryption level. */
     int (*yield_secret_cb)(uint32_t enc_level, int direction /* 0=RX, 1=TX */,
@@ -85,4 +94,15 @@ int ossl_quic_tls_tick(QUIC_TLS *qtls);
 int ossl_quic_tls_set_transport_params(QUIC_TLS *qtls,
                                        const unsigned char *transport_params,
                                        size_t transport_params_len);
+
+int ossl_quic_tls_get_error(QUIC_TLS *qtls,
+                            uint64_t *error_code,
+                            const char **error_msg,
+                            ERR_STATE **error_state);
+
+int ossl_quic_tls_is_cert_request(QUIC_TLS *qtls);
+int ossl_quic_tls_has_bad_max_early_data(QUIC_TLS *qtls);
+
+# endif
+
 #endif

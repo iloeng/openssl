@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,6 +15,7 @@
 #include <openssl/err.h>
 #include "internal/cryptlib.h"
 #include "internal/sizes.h"
+#include "crypto/evp.h"
 #include "pk7_local.h"
 
 static int add_attribute(STACK_OF(X509_ATTRIBUTE) **sk, int nid, int atrtype,
@@ -174,22 +175,10 @@ static int pkcs7_decrypt_rinfo(unsigned char **pek, int *peklen,
          * disable implicit rejection for RSA keys */
         EVP_PKEY_CTX_ctrl_str(pctx, "rsa_pkcs1_implicit_rejection", "0");
 
-    if (EVP_PKEY_decrypt(pctx, NULL, &eklen,
-                         ri->enc_key->data, ri->enc_key->length) <= 0)
+    ret = evp_pkey_decrypt_alloc(pctx, &ek, &eklen, fixlen,
+                                 ri->enc_key->data, ri->enc_key->length);
+    if (ret <= 0)
         goto err;
-
-    ek = OPENSSL_malloc(eklen);
-    if (ek == NULL)
-        goto err;
-
-    if (EVP_PKEY_decrypt(pctx, ek, &eklen,
-                         ri->enc_key->data, ri->enc_key->length) <= 0
-            || eklen == 0
-            || (fixlen != 0 && eklen != fixlen)) {
-        ret = 0;
-        ERR_raise(ERR_LIB_PKCS7, ERR_R_EVP_LIB);
-        goto err;
-    }
 
     ret = 1;
 
@@ -845,10 +834,9 @@ int PKCS7_dataFinal(PKCS7 *p7, BIO *bio)
                     goto err;
             } else {
                 unsigned char *abuf = NULL;
-                unsigned int abuflen;
-                abuflen = EVP_PKEY_get_size(si->pkey);
-                abuf = OPENSSL_malloc(abuflen);
-                if (abuf == NULL)
+                unsigned int abuflen = EVP_PKEY_get_size(si->pkey);
+
+                if (abuflen == 0 || (abuf = OPENSSL_malloc(abuflen)) == NULL)
                     goto err;
 
                 if (!EVP_SignFinal_ex(ctx_tmp, abuf, &abuflen, si->pkey,
@@ -932,7 +920,7 @@ int PKCS7_SIGNER_INFO_sign(PKCS7_SIGNER_INFO *si)
 
     alen = ASN1_item_i2d((ASN1_VALUE *)si->auth_attr, &abuf,
                          ASN1_ITEM_rptr(PKCS7_ATTR_SIGN));
-    if (!abuf)
+    if (alen < 0 || abuf == NULL)
         goto err;
     if (EVP_DigestSignUpdate(mctx, abuf, alen) <= 0)
         goto err;
@@ -1114,7 +1102,7 @@ int PKCS7_signatureVerify(BIO *bio, PKCS7 *p7, PKCS7_SIGNER_INFO *si,
 
         alen = ASN1_item_i2d((ASN1_VALUE *)sk, &abuf,
                              ASN1_ITEM_rptr(PKCS7_ATTR_VERIFY));
-        if (alen <= 0) {
+        if (alen <= 0 || abuf == NULL) {
             ERR_raise(ERR_LIB_PKCS7, ERR_R_ASN1_LIB);
             ret = -1;
             goto err;
@@ -1246,36 +1234,29 @@ static int add_attribute(STACK_OF(X509_ATTRIBUTE) **sk, int nid, int atrtype,
                          void *value)
 {
     X509_ATTRIBUTE *attr = NULL;
+    int i, n;
 
     if (*sk == NULL) {
         if ((*sk = sk_X509_ATTRIBUTE_new_null()) == NULL)
             return 0;
- new_attrib:
-        if ((attr = X509_ATTRIBUTE_create(nid, atrtype, value)) == NULL)
-            return 0;
-        if (!sk_X509_ATTRIBUTE_push(*sk, attr)) {
-            X509_ATTRIBUTE_free(attr);
-            return 0;
-        }
-    } else {
-        int i;
-
-        for (i = 0; i < sk_X509_ATTRIBUTE_num(*sk); i++) {
-            attr = sk_X509_ATTRIBUTE_value(*sk, i);
-            if (OBJ_obj2nid(X509_ATTRIBUTE_get0_object(attr)) == nid) {
-                X509_ATTRIBUTE_free(attr);
-                attr = X509_ATTRIBUTE_create(nid, atrtype, value);
-                if (attr == NULL)
-                    return 0;
-                if (!sk_X509_ATTRIBUTE_set(*sk, i, attr)) {
-                    X509_ATTRIBUTE_free(attr);
-                    return 0;
-                }
-                goto end;
-            }
-        }
-        goto new_attrib;
     }
+    n = sk_X509_ATTRIBUTE_num(*sk);
+    for (i = 0; i < n; i++) {
+        attr = sk_X509_ATTRIBUTE_value(*sk, i);
+        if (OBJ_obj2nid(X509_ATTRIBUTE_get0_object(attr)) == nid)
+            goto end;
+    }
+    if (!sk_X509_ATTRIBUTE_push(*sk, NULL))
+        return 0;
+
  end:
+    attr = X509_ATTRIBUTE_create(nid, atrtype, value);
+    if (attr == NULL) {
+        if (i == n)
+            sk_X509_ATTRIBUTE_pop(*sk);
+        return 0;
+    }
+    X509_ATTRIBUTE_free(sk_X509_ATTRIBUTE_value(*sk, i));
+    (void) sk_X509_ATTRIBUTE_set(*sk, i, attr);
     return 1;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2022 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2023 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -21,6 +21,7 @@
 static STACK_OF(CMS_CertificateChoices)
 **cms_get0_certificate_choices(CMS_ContentInfo *cms);
 
+IMPLEMENT_ASN1_ALLOC_FUNCTIONS(CMS_ContentInfo)
 IMPLEMENT_ASN1_PRINT_FUNCTION(CMS_ContentInfo)
 
 CMS_ContentInfo *d2i_CMS_ContentInfo(CMS_ContentInfo **a,
@@ -64,19 +65,6 @@ CMS_ContentInfo *CMS_ContentInfo_new_ex(OSSL_LIB_CTX *libctx, const char *propq)
         }
     }
     return ci;
-}
-
-CMS_ContentInfo *CMS_ContentInfo_new(void)
-{
-    return CMS_ContentInfo_new_ex(NULL, NULL);
-}
-
-void CMS_ContentInfo_free(CMS_ContentInfo *cms)
-{
-    if (cms != NULL) {
-        OPENSSL_free(cms->ctx.propq);
-        ASN1_item_free((ASN1_VALUE *)cms, ASN1_ITEM_rptr(CMS_ContentInfo));
-    }
 }
 
 const CMS_CTX *ossl_cms_get0_cmsctx(const CMS_ContentInfo *cms)
@@ -634,12 +622,18 @@ STACK_OF(X509) *CMS_get1_certs(CMS_ContentInfo *cms)
     STACK_OF(X509) *certs = NULL;
     CMS_CertificateChoices *cch;
     STACK_OF(CMS_CertificateChoices) **pcerts;
-    int i;
+    int i, n;
 
     pcerts = cms_get0_certificate_choices(cms);
     if (pcerts == NULL)
         return NULL;
-    for (i = 0; i < sk_CMS_CertificateChoices_num(*pcerts); i++) {
+
+    /* make sure to return NULL only on error */
+    n = sk_CMS_CertificateChoices_num(*pcerts);
+    if ((certs = sk_X509_new_reserve(NULL, n)) == NULL)
+        return NULL;
+
+    for (i = 0; i < n; i++) {
         cch = sk_CMS_CertificateChoices_value(*pcerts, i);
         if (cch->type == 0) {
             if (!ossl_x509_add_cert_new(&certs, cch->d.certificate,
@@ -650,7 +644,6 @@ STACK_OF(X509) *CMS_get1_certs(CMS_ContentInfo *cms)
         }
     }
     return certs;
-
 }
 
 STACK_OF(X509_CRL) *CMS_get1_crls(CMS_ContentInfo *cms)
@@ -658,18 +651,20 @@ STACK_OF(X509_CRL) *CMS_get1_crls(CMS_ContentInfo *cms)
     STACK_OF(X509_CRL) *crls = NULL;
     STACK_OF(CMS_RevocationInfoChoice) **pcrls;
     CMS_RevocationInfoChoice *rch;
-    int i;
+    int i, n;
 
     pcrls = cms_get0_revocation_choices(cms);
     if (pcrls == NULL)
         return NULL;
-    for (i = 0; i < sk_CMS_RevocationInfoChoice_num(*pcrls); i++) {
+
+    /* make sure to return NULL only on error */
+    n = sk_CMS_RevocationInfoChoice_num(*pcrls);
+    if ((crls = sk_X509_CRL_new_reserve(NULL, n)) == NULL)
+        return NULL;
+
+    for (i = 0; i < n; i++) {
         rch = sk_CMS_RevocationInfoChoice_value(*pcrls, i);
         if (rch->type == 0) {
-            if (crls == NULL) {
-                if ((crls = sk_X509_CRL_new_null()) == NULL)
-                    return NULL;
-            }
             if (!sk_X509_CRL_push(crls, rch->d.crl)
                     || !X509_CRL_up_ref(rch->d.crl)) {
                 sk_X509_CRL_pop_free(crls, X509_CRL_free);

@@ -284,6 +284,7 @@ id-smime-ct 47		: id-ct-geofeedCSVwithCRLF
 id-smime-ct 48		: id-ct-signedChecklist
 id-smime-ct 49		: id-ct-ASPA
 id-smime-ct 50		: id-ct-signedTAL
+id-smime-ct 51		: id-ct-rpkiSignedPrefixList
 
 # S/MIME Attributes
 id-smime-aa 1		: id-smime-aa-receiptRequest
@@ -353,9 +354,10 @@ id-smime-cti 6		: id-smime-cti-ets-proofOfCreation
 
 pkcs9 20		:			: friendlyName
 pkcs9 21		:			: localKeyID
+!Alias ms-corp 1 3 6 1 4 1 311
 !Cname ms-csp-name
-1 3 6 1 4 1 311 17 1	: CSPName		: Microsoft CSP Name
-1 3 6 1 4 1 311 17 2	: LocalKeySet		: Microsoft Local Key set
+ms-corp 17 1	: CSPName		: Microsoft CSP Name
+ms-corp 17 2	: LocalKeySet		: Microsoft Local Key set
 !Alias certTypes pkcs9 22
 certTypes 1		:			: x509Certificate
 certTypes 2		:			: sdsiCertificate
@@ -435,21 +437,26 @@ rsadsi 3 8		: RC5-CBC		: rc5-cbc
 			: RC5-OFB		: rc5-ofb
 
 !Cname ms-ext-req
-1 3 6 1 4 1 311 2 1 14	: msExtReq		: Microsoft Extension Request
+ms-corp 2 1 14	: msExtReq		: Microsoft Extension Request
 !Cname ms-code-ind
-1 3 6 1 4 1 311 2 1 21	: msCodeInd		: Microsoft Individual Code Signing
+ms-corp 2 1 21	: msCodeInd		: Microsoft Individual Code Signing
 !Cname ms-code-com
-1 3 6 1 4 1 311 2 1 22	: msCodeCom		: Microsoft Commercial Code Signing
+ms-corp 2 1 22	: msCodeCom		: Microsoft Commercial Code Signing
 !Cname ms-ctl-sign
-1 3 6 1 4 1 311 10 3 1	: msCTLSign		: Microsoft Trust List Signing
+ms-corp 10 3 1	: msCTLSign		: Microsoft Trust List Signing
 !Cname ms-sgc
-1 3 6 1 4 1 311 10 3 3	: msSGC			: Microsoft Server Gated Crypto
+ms-corp 10 3 3	: msSGC			: Microsoft Server Gated Crypto
 !Cname ms-efs
-1 3 6 1 4 1 311 10 3 4	: msEFS			: Microsoft Encrypted File System
+ms-corp 10 3 4	: msEFS			: Microsoft Encrypted File System
 !Cname ms-smartcard-login
-1 3 6 1 4 1 311 20 2 2	: msSmartcardLogin	: Microsoft Smartcard Login
+ms-corp 20 2 2	: msSmartcardLogin	: Microsoft Smartcard Login
 !Cname ms-upn
-1 3 6 1 4 1 311 20 2 3	: msUPN			: Microsoft User Principal Name
+ms-corp 20 2 3	: msUPN			: Microsoft User Principal Name
+
+ms-corp 25 2	: ms-ntds-sec-ext	: Microsoft NTDS CA Extension
+ms-corp 25 2 1	: ms-ntds-obj-sid	: Microsoft NTDS AD objectSid
+ms-corp 21 7	: ms-cert-templ		: Microsoft certificate template
+ms-corp 21 10	: ms-app-policies	: Microsoft Application Policies Extension
 
 1 3 6 1 4 1 188 7 1 1 2	: IDEA-CBC		: idea-cbc
 			: IDEA-ECB		: idea-ecb
@@ -512,7 +519,8 @@ id-pkix-mod 100		: id-mod-cmp2021-02
 id-pe 1			: authorityInfoAccess	: Authority Information Access
 id-pe 2			: biometricInfo		: Biometric Info
 id-pe 3			: qcStatements
-id-pe 4			: ac-auditEntity
+id-pe 4         : ac-auditIdentity      : X509v3 Audit Identity
+!Alias ac-auditEntity ac-auditIdentity
 id-pe 5			: ac-targeting
 id-pe 6			: aaControls
 id-pe 7			: sbgp-ipAddrBlock
@@ -650,6 +658,7 @@ id-cmc 24		: id-cmc-confirmCertAcceptance
 # other names
 id-on 1			: id-on-personalData
 id-on 3			: id-on-permanentIdentifier : Permanent Identifier
+id-on 4			: id-on-hardwareModuleName : Hardware Module Name
 id-on 5			: id-on-xmppAddr : XmppAddr
 id-on 7			: id-on-dnsSRV : SRVName
 id-on 8			: id-on-NAIRealm : NAIRealm
@@ -873,14 +882,64 @@ id-ce 35		: authorityKeyIdentifier : X509v3 Authority Key Identifier
 id-ce 36		: policyConstraints	: X509v3 Policy Constraints
 !Cname ext-key-usage
 id-ce 37		: extendedKeyUsage	: X509v3 Extended Key Usage
+!Cname authority-attribute-identifier
+id-ce 38		: authorityAttributeIdentifier : X509v3 Authority Attribute Identifier
+!Cname role-spec-cert-identifier
+id-ce 39		: roleSpecCertIdentifier	: X509v3 Role Specification Certificate Identifier
+!Cname basic-att-constraints
+id-ce 41		: basicAttConstraints		: X509v3 Basic Attribute Certificate Constraints
+!Cname delegated-name-constraints
+id-ce 42 		: delegatedNameConstraints	: X509v3 Delegated Name Constraints
+!Cname time-specification
+id-ce 43		: timeSpecification			: X509v3 Time Specification
 !Cname freshest-crl
 id-ce 46		: freshestCRL		: X509v3 Freshest CRL
+!Cname attribute-descriptor
+id-ce 48		: attributeDescriptor		: X509v3 Attribute Descriptor
+!Cname user-notice
+id-ce 49		: userNotice				: X509v3 User Notice
+!Cname soa-identifier
+id-ce 50        : sOAIdentifier     : X509v3 Source of Authority Identifier
+!Cname acceptable-cert-policies
+id-ce 52		: acceptableCertPolicies	: X509v3 Acceptable Certification Policies
 !Cname inhibit-any-policy
 id-ce 54		: inhibitAnyPolicy	: X509v3 Inhibit Any Policy
 !Cname target-information
 id-ce 55		: targetInformation	: X509v3 AC Targeting
 !Cname no-rev-avail
 id-ce 56		: noRevAvail		: X509v3 No Revocation Available
+!Cname acceptable-privilege-policies
+id-ce 57		: acceptablePrivPolicies	: X509v3 Acceptable Privilege Policies
+!Cname indirect-issuer
+id-ce 61		: indirectIssuer			: X509v3 Indirect Issuer
+!Cname no-assertion
+id-ce 62        : noAssertion       : X509v3 No Assertion
+!Cname id-aa-issuing-distribution-point
+id-ce 63		: aAissuingDistributionPoint : X509v3 Attribute Authority Issuing Distribution Point
+!Cname issued-on-behalf-of
+id-ce 64		: issuedOnBehalfOf	: X509v3 Issued On Behalf Of
+!Cname single-use
+id-ce 65		: singleUse			: X509v3 Single Use
+!Cname group-ac
+id-ce 66		: groupAC			: X509v3 Group Attribute Certificate
+!Cname allowed-attribute-assignments
+id-ce 67		: allowedAttributeAssignments		: X509v3 Allowed Attribute Assignments
+!Cname attribute-mappings
+id-ce 68		: attributeMappings		: X509v3 Attribute Mappings
+!Cname holder-name-constraints
+id-ce 69		: holderNameConstraints	: X509v3 Holder Name Constraints
+!Cname authorization-validation
+id-ce 70		: authorizationValidation : X509v3 Authorization Validation
+!Cname prot-restrict
+id-ce 71		: protRestrict : X509v3 Protocol Restriction
+!Cname subject-alt-public-key-info
+id-ce 72		: subjectAltPublicKeyInfo : X509v3 Subject Alternative Public Key Info
+!Cname alt-signature-algorithm
+id-ce 73		: altSignatureAlgorithm : X509v3 Alternative Signature Algorithm
+!Cname alt-signature-value
+id-ce 74		: altSignatureValue : X509v3 Alternative Signature Value
+!Cname associated-information
+id-ce 75		: associatedInformation : X509v3 Associated Information
 
 # From RFC5280
 ext-key-usage 0		: anyExtendedKeyUsage	: Any Extended Key Usage
@@ -936,6 +995,9 @@ Private 1		: enterprises		: Enterprises
 
 # RFC 2247
 Enterprises 1466 344	: dcobject		: dcObject
+
+# Wi-SUN Assigned Value Registry
+Enterprises 45605 1     : id-kp-wisun-fan-device : Wi-SUN Alliance Field Area Network (FAN)
 
 # RFC 1495
 Mail 1			: mime-mhs		: MIME MHS
@@ -1686,9 +1748,9 @@ secg-scheme 14 3 : dhSinglePass-cofactorDH-sha512kdf-scheme
 # CABForum EV SSL Certificate Guidelines
 # (see https://cabforum.org/extended-validation/)
 # OIDs for Subject Jurisdiction of Incorporation or Registration
-1 3 6 1 4 1 311 60 2 1 1	: jurisdictionL		: jurisdictionLocalityName
-1 3 6 1 4 1 311 60 2 1 2	: jurisdictionST	: jurisdictionStateOrProvinceName
-1 3 6 1 4 1 311 60 2 1 3	: jurisdictionC		: jurisdictionCountryName
+ms-corp 60 2 1 1	: jurisdictionL		: jurisdictionLocalityName
+ms-corp 60 2 1 2	: jurisdictionST	: jurisdictionStateOrProvinceName
+ms-corp 60 2 1 3	: jurisdictionC		: jurisdictionCountryName
 
 # SCRYPT algorithm
 !Cname id-scrypt
