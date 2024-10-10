@@ -1,5 +1,5 @@
 /*
- * Copyright 2020-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -253,7 +253,7 @@ int ecdh_set_ctx_params(void *vpecdhctx, const OSSL_PARAM params[])
 
     if (pectx == NULL)
         return 0;
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     if (!OSSL_FIPS_IND_SET_CTX_PARAM(pectx, OSSL_FIPS_IND_SETTABLE0, params,
@@ -320,9 +320,9 @@ int ecdh_set_ctx_params(void *vpecdhctx, const OSSL_PARAM params[])
             return 0;
         }
 #ifdef FIPS_MODULE
-        if (!ossl_fips_ind_digest_check(OSSL_FIPS_IND_GET(pectx),
-                                        OSSL_FIPS_IND_SETTABLE1, pectx->libctx,
-                                        pectx->kdf_md, "ECDH Set Ctx")) {
+        if (!ossl_fips_ind_digest_exch_check(OSSL_FIPS_IND_GET(pectx),
+                                             OSSL_FIPS_IND_SETTABLE1, pectx->libctx,
+                                             pectx->kdf_md, "ECDH Set Ctx")) {
             EVP_MD_free(pectx->kdf_md);
             pectx->kdf_md = NULL;
             return 0;
@@ -539,6 +539,9 @@ int ecdh_plain_derive(void *vpecdhctx, unsigned char *secret,
         }
     } else {
         privk = pecdhctx->k;
+#ifdef FIPS_MODULE
+        cofactor_approved = key_cofactor_mode;
+#endif
     }
 
 #ifdef FIPS_MODULE
@@ -551,7 +554,7 @@ int ecdh_plain_derive(void *vpecdhctx, unsigned char *secret,
                                          pecdhctx->libctx, "ECDH", "Cofactor",
                                          ossl_fips_config_ecdh_cofactor_check)) {
             ERR_raise(ERR_LIB_PROV, PROV_R_COFACTOR_REQUIRED);
-            return 0;
+            goto end;
         }
     }
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -98,7 +98,6 @@ typedef struct {
 
     /* The Algorithm Identifier of the combined signature algorithm */
     unsigned char aid_buf[OSSL_MAX_ALGORITHM_ID_SIZE];
-    unsigned char *aid;
     size_t  aid_len;
 
     /* main digest */
@@ -160,6 +159,7 @@ static int dsa_setup_md(PROV_DSA_CTX *ctx,
         WPACKET pkt;
         int md_nid;
         size_t mdname_len = strlen(mdname);
+        unsigned char *aid = NULL;
 
         md = EVP_MD_fetch(ctx->libctx, mdname, mdprops);
         md_nid = ossl_digest_get_approved_nid(md);
@@ -223,9 +223,11 @@ static int dsa_setup_md(PROV_DSA_CTX *ctx,
                                                           md_nid)
             && WPACKET_finish(&pkt)) {
             WPACKET_get_total_written(&pkt, &ctx->aid_len);
-            ctx->aid = WPACKET_get_curr(&pkt);
+            aid = WPACKET_get_curr(&pkt);
         }
         WPACKET_cleanup(&pkt);
+        if (aid != NULL && ctx->aid_len != 0)
+            memmove(ctx->aid_buf, aid, ctx->aid_len);
 
         ctx->mdctx = NULL;
         ctx->md = md;
@@ -674,7 +676,9 @@ static int dsa_get_ctx_params(void *vpdsactx, OSSL_PARAM *params)
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_ALGORITHM_ID);
     if (p != NULL
-        && !OSSL_PARAM_set_octet_string(p, pdsactx->aid, pdsactx->aid_len))
+        && !OSSL_PARAM_set_octet_string(p,
+                                        pdsactx->aid_len == 0 ? NULL : pdsactx->aid_buf,
+                                        pdsactx->aid_len))
         return 0;
 
     p = OSSL_PARAM_locate(params, OSSL_SIGNATURE_PARAM_DIGEST);
@@ -704,16 +708,15 @@ static const OSSL_PARAM *dsa_gettable_ctx_params(ossl_unused void *ctx,
     return known_gettable_ctx_params;
 }
 
-/* The common params for dsa_set_ctx_params and dsa_sigalg_set_ctx_params */
+/**
+ * @brief Setup common params for dsa_set_ctx_params and dsa_sigalg_set_ctx_params
+ * The caller is responsible for checking |vpdsactx| is not NULL and |params|
+ * is not empty.
+ */
 static int dsa_common_set_ctx_params(void *vpdsactx, const OSSL_PARAM params[])
 {
     PROV_DSA_CTX *pdsactx = (PROV_DSA_CTX *)vpdsactx;
     const OSSL_PARAM *p;
-
-    if (pdsactx == NULL)
-        return 0;
-    if (params == NULL)
-        return 1;
 
     if (!OSSL_FIPS_IND_SET_CTX_PARAM(pdsactx, OSSL_FIPS_IND_SETTABLE0, params,
                                      OSSL_SIGNATURE_PARAM_FIPS_KEY_CHECK))
@@ -745,11 +748,13 @@ static int dsa_set_ctx_params(void *vpdsactx, const OSSL_PARAM params[])
     const OSSL_PARAM *p;
     int ret;
 
+    if (pdsactx == NULL)
+        return 0;
+    if (ossl_param_is_empty(params))
+        return 1;
+
     if ((ret = dsa_common_set_ctx_params(pdsactx, params)) <= 0)
         return ret;
-
-    if (params == NULL)
-        return 1;
 
     p = OSSL_PARAM_locate_const(params, OSSL_SIGNATURE_PARAM_DIGEST);
     if (p != NULL) {
@@ -948,11 +953,13 @@ static int dsa_sigalg_set_ctx_params(void *vpdsactx, const OSSL_PARAM params[])
     const OSSL_PARAM *p;
     int ret;
 
+    if (pdsactx == NULL)
+        return 0;
+    if (ossl_param_is_empty(params))
+        return 1;
+
     if ((ret = dsa_common_set_ctx_params(pdsactx, params)) <= 0)
         return ret;
-
-    if (params == NULL)
-        return 1;
 
     if (pdsactx->operation == EVP_PKEY_OP_VERIFYMSG) {
         p = OSSL_PARAM_locate_const(params, OSSL_SIGNATURE_PARAM_SIGNATURE);

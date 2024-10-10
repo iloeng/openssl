@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -1542,7 +1542,7 @@ static int rsa_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
 
     if (prsactx == NULL)
         return 0;
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     if (!OSSL_FIPS_IND_SET_CTX_PARAM(prsactx, OSSL_FIPS_IND_SETTABLE0, params,
@@ -1990,7 +1990,7 @@ static int rsa_sigalg_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
 
     if (prsactx == NULL)
         return 0;
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     if (prsactx->operation == EVP_PKEY_OP_VERIFYMSG) {
@@ -2003,11 +2003,8 @@ static int rsa_sigalg_set_ctx_params(void *vprsactx, const OSSL_PARAM params[])
                                              0, &prsactx->siglen))
                 return 0;
         }
-        return 1;
     }
-
-    /* Wrong operation */
-    return 0;
+    return 1;
 }
 
 #define IMPL_RSA_SIGALG(md, MD)                                         \

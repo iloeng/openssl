@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -296,6 +296,7 @@ extern const OSSL_DISPATCH ossl_kdf_argon2id_functions[];
 extern const OSSL_DISPATCH ossl_test_rng_functions[];
 extern const OSSL_DISPATCH ossl_seed_src_functions[];
 extern const OSSL_DISPATCH ossl_jitter_functions[];
+extern const OSSL_DISPATCH ossl_crng_test_functions[];
 extern const OSSL_DISPATCH ossl_drbg_hash_functions[];
 extern const OSSL_DISPATCH ossl_drbg_ossl_hmac_functions[];
 extern const OSSL_DISPATCH ossl_drbg_ctr_functions[];

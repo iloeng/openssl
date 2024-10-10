@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2021-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -306,6 +306,7 @@
  * RANDs
  * -----
  */
+#define PROV_NAMES_CRNG_TEST "CRNG-TEST"
 #define PROV_NAMES_CTR_DRBG "CTR-DRBG"
 #define PROV_NAMES_HASH_DRBG "HASH-DRBG"
 #define PROV_NAMES_HMAC_DRBG "HMAC-DRBG"

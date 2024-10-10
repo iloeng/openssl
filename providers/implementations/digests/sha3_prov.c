@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2023 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2024 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -198,10 +198,12 @@ static size_t s390x_sha3_absorb(void *vctx, const void *inp, size_t len)
     if (!(ctx->xof_state == XOF_STATE_INIT ||
           ctx->xof_state == XOF_STATE_ABSORB))
         return 0;
-    fc = ctx->pad;
-    fc |= ctx->xof_state == XOF_STATE_INIT ? S390X_KIMD_NIP : 0;
-    ctx->xof_state = XOF_STATE_ABSORB;
-    s390x_kimd(inp, len - rem, fc, ctx->A);
+    if (len - rem > 0) {
+        fc = ctx->pad;
+        fc |= ctx->xof_state == XOF_STATE_INIT ? S390X_KIMD_NIP : 0;
+        ctx->xof_state = XOF_STATE_ABSORB;
+        s390x_kimd(inp, len - rem, fc, ctx->A);
+    }
     return rem;
 }
 
@@ -243,6 +245,7 @@ static int s390x_shake_final(void *vctx, unsigned char *out, size_t outlen)
 static int s390x_shake_squeeze(void *vctx, unsigned char *out, size_t outlen)
 {
     KECCAK1600_CTX *ctx = vctx;
+    unsigned int fc;
     size_t len;
 
     if (!ossl_prov_is_running())
@@ -253,8 +256,10 @@ static int s390x_shake_squeeze(void *vctx, unsigned char *out, size_t outlen)
      * On the first squeeze call, finish the absorb process (incl. padding).
      */
     if (ctx->xof_state != XOF_STATE_SQUEEZE) {
+        fc = ctx->pad;
+        fc |= ctx->xof_state == XOF_STATE_INIT ? S390X_KLMD_NIP : 0;
         ctx->xof_state = XOF_STATE_SQUEEZE;
-        s390x_klmd(ctx->buf, ctx->bufsz, out, outlen, ctx->pad, ctx->A);
+        s390x_klmd(ctx->buf, ctx->bufsz, out, outlen, fc, ctx->A);
         ctx->bufsz = outlen % ctx->block_size;
         /* reuse ctx->bufsz to count bytes squeezed from current sponge */
         return 1;
@@ -584,7 +589,7 @@ static int shake_get_ctx_params(void *vctx, OSSL_PARAM params[])
 
     if (ctx == NULL)
         return 0;
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     p = OSSL_PARAM_locate(params, OSSL_DIGEST_PARAM_XOFLEN);
@@ -620,7 +625,7 @@ static int shake_set_ctx_params(void *vctx, const OSSL_PARAM params[])
 
     if (ctx == NULL)
         return 0;
-    if (params == NULL)
+    if (ossl_param_is_empty(params))
         return 1;
 
     p = OSSL_PARAM_locate_const(params, OSSL_DIGEST_PARAM_XOFLEN);
